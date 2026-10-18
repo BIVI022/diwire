@@ -3742,19 +3742,16 @@ def _dependency_value_for_slot_sync(
     return getattr(resolver, f"resolve_{dependency_slot}")()
 
 
-def _dependency_value_for_slot_async(
+async def _dependency_value_for_slot_async(
     *,
     resolver: Any,
     dependency_workflow: ProviderWorkflowPlan,
     dependency_requires_async: bool,
-) -> Awaitable[Any]:
-    async def _run() -> Any:
-        dependency_slot = dependency_workflow.slot
-        if dependency_requires_async:
-            return await getattr(resolver, f"aresolve_{dependency_slot}")()
-        return getattr(resolver, f"resolve_{dependency_slot}")()
-
-    return _run()
+) -> Any:
+    dependency_slot = dependency_workflow.slot
+    if dependency_requires_async:
+        return await getattr(resolver, f"aresolve_{dependency_slot}")()
+    return getattr(resolver, f"resolve_{dependency_slot}")()
 
 
 def _argument_part_for_dependency(
