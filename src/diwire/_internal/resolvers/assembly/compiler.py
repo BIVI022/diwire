@@ -3272,95 +3272,92 @@ def _build_local_value_sync(
     raise ValueError(msg)
 
 
-def _build_local_value_async(
+async def _build_local_value_async(
     *,
     runtime: _ResolverRuntime,
     resolver: Any,
     workflow: ProviderWorkflowPlan,
     provider_scope_resolver: Any,
-) -> Awaitable[Any]:
-    async def _run() -> Any:
-        provider = runtime.provider_by_slot[workflow.slot]
+) -> Any:
+    provider = runtime.provider_by_slot[workflow.slot]
 
-        if workflow.provider_attribute == "instance":
-            return provider
+    if workflow.provider_attribute == "instance":
+        return provider
 
-        if (
-            not workflow.dependency_plans
-            and not workflow.dependencies
-            and not workflow.provider_is_inject_wrapper
-        ):
-            return await _build_local_value_async_no_arguments(
-                resolver=resolver,
-                workflow=workflow,
-                provider_scope_resolver=provider_scope_resolver,
-                provider=provider,
-            )
-
-        argument_parts = await _build_argument_parts_async(
-            runtime=runtime,
+    if (
+        not workflow.dependency_plans
+        and not workflow.dependencies
+        and not workflow.provider_is_inject_wrapper
+    ):
+        return await _build_local_value_async_no_arguments(
             resolver=resolver,
             workflow=workflow,
+            provider_scope_resolver=provider_scope_resolver,
+            provider=provider,
         )
 
-        if workflow.provider_attribute in {"concrete_type", "factory"}:
-            value = _call_provider(callable_obj=provider, argument_parts=argument_parts)
-            if workflow.is_provider_async:
-                return await cast("Awaitable[Any]", value)
-            return value
+    argument_parts = await _build_argument_parts_async(
+        runtime=runtime,
+        resolver=resolver,
+        workflow=workflow,
+    )
 
-        if workflow.provider_attribute == "generator":
-            if provider_scope_resolver is _MISSING_RESOLVER:
-                _raise_scope_mismatch(workflow=workflow)
+    if workflow.provider_attribute in {"concrete_type", "factory"}:
+        value = _call_provider(callable_obj=provider, argument_parts=argument_parts)
+        if workflow.is_provider_async:
+            return await cast("Awaitable[Any]", value)
+        return value
 
-            if workflow.is_provider_async:
-                if resolver._cleanup_enabled:
-                    provider_cm = _call_provider(
-                        callable_obj=asynccontextmanager(provider),
-                        argument_parts=argument_parts,
-                    )
-                    value = await provider_cm.__aenter__()
-                    provider_scope_resolver._cleanup_callbacks.append((1, provider_cm.__aexit__))
-                    return value
+    if workflow.provider_attribute == "generator":
+        if provider_scope_resolver is _MISSING_RESOLVER:
+            _raise_scope_mismatch(workflow=workflow)
 
-                provider_gen = _call_provider(callable_obj=provider, argument_parts=argument_parts)
-                return await anext(provider_gen)
-
+        if workflow.is_provider_async:
             if resolver._cleanup_enabled:
-                provider_gen = _call_provider(callable_obj=provider, argument_parts=argument_parts)
-                try:
-                    value = next(provider_gen)
-                except StopIteration as error:
-                    msg = "generator didn't yield"
-                    raise RuntimeError(msg) from error
-                provider_scope_resolver._cleanup_callbacks.append(
-                    (_CLEANUP_KIND_SYNC_GENERATOR, provider_gen)
+                provider_cm = _call_provider(
+                    callable_obj=asynccontextmanager(provider),
+                    argument_parts=argument_parts,
                 )
+                value = await provider_cm.__aenter__()
+                provider_scope_resolver._cleanup_callbacks.append((1, provider_cm.__aexit__))
                 return value
 
             provider_gen = _call_provider(callable_obj=provider, argument_parts=argument_parts)
-            return next(provider_gen)
+            return await anext(provider_gen)
 
-        if workflow.provider_attribute == "context_manager":
-            if provider_scope_resolver is _MISSING_RESOLVER:
-                _raise_scope_mismatch(workflow=workflow)
-
-            provider_cm = _call_provider(callable_obj=provider, argument_parts=argument_parts)
-            if workflow.is_provider_async:
-                value = await provider_cm.__aenter__()
-                if resolver._cleanup_enabled:
-                    provider_scope_resolver._cleanup_callbacks.append((1, provider_cm.__aexit__))
-                return value
-
-            value = provider_cm.__enter__()
-            if resolver._cleanup_enabled:
-                provider_scope_resolver._cleanup_callbacks.append((0, provider_cm.__exit__))
+        if resolver._cleanup_enabled:
+            provider_gen = _call_provider(callable_obj=provider, argument_parts=argument_parts)
+            try:
+                value = next(provider_gen)
+            except StopIteration as error:
+                msg = "generator didn't yield"
+                raise RuntimeError(msg) from error
+            provider_scope_resolver._cleanup_callbacks.append(
+                (_CLEANUP_KIND_SYNC_GENERATOR, provider_gen)
+            )
             return value
 
-        msg = f"Unsupported provider attribute {workflow.provider_attribute!r}."
-        raise ValueError(msg)
+        provider_gen = _call_provider(callable_obj=provider, argument_parts=argument_parts)
+        return next(provider_gen)
 
-    return _run()
+    if workflow.provider_attribute == "context_manager":
+        if provider_scope_resolver is _MISSING_RESOLVER:
+            _raise_scope_mismatch(workflow=workflow)
+
+        provider_cm = _call_provider(callable_obj=provider, argument_parts=argument_parts)
+        if workflow.is_provider_async:
+            value = await provider_cm.__aenter__()
+            if resolver._cleanup_enabled:
+                provider_scope_resolver._cleanup_callbacks.append((1, provider_cm.__aexit__))
+            return value
+
+        value = provider_cm.__enter__()
+        if resolver._cleanup_enabled:
+            provider_scope_resolver._cleanup_callbacks.append((0, provider_cm.__exit__))
+        return value
+
+    msg = f"Unsupported provider attribute {workflow.provider_attribute!r}."
+    raise ValueError(msg)
 
 
 def _awaitable_in_sync(*, value: Any, slot: int) -> Any:
