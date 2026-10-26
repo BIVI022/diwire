@@ -114,9 +114,9 @@ jobs:
 
   e2e-value-study:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.e2e_value_study }}
-    name: Owner E2E value study (frozen baseline and candidate)
+    name: Direct async factory E2E value study
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 40
     permissions:
       contents: read
     steps:
@@ -139,7 +139,7 @@ jobs:
           from pathlib import Path
           root = Path(os.environ["RUNNER_TEMP"]) / "diwire-owner-e2e-value"
           root.mkdir()
-          bundle = json.loads(Path(".agents/performance-evidence/2026-10-26-e2e-value/study-bundle.json").read_text())
+          bundle = json.loads(Path(".agents/performance-evidence/2026-10-26-e2e-direct-factory/study-bundle.json").read_text())
           for name, content in bundle["files"].items():
               destination = root / name
               destination.parent.mkdir(parents=True, exist_ok=True)
@@ -150,7 +150,7 @@ jobs:
         run: |
           python3 "$RUNNER_TEMP/diwire-owner-e2e-value/bootstrap.py" \
             "$GITHUB_WORKSPACE" \
-            "$GITHUB_WORKSPACE/.agents/performance-evidence/2026-10-26-e2e-value/study-bundle.json"
+            "$GITHUB_WORKSPACE/.agents/performance-evidence/2026-10-26-e2e-direct-factory/study-bundle.json"
 
       - name: Upload all accepted, rejected or incomplete evidence
         if: always()
