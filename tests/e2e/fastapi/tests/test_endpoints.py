@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import os
 from collections.abc import AsyncIterator
+from uuid import UUID
 
 import httpx
 import pytest
@@ -77,3 +79,33 @@ async def test_websocket_request_based_with_custom_state_returns_ws_path() -> No
         await websocket.send("ping")
         payload = await websocket.recv()
     assert payload == f"WebSocket path: {path}"
+
+
+@pytest.mark.asyncio
+async def test_async_leaf_factory_returns_fresh_values(http_client: httpx.AsyncClient) -> None:
+    tokens: list[str] = []
+    for _ in range(2):
+        response = await http_client.get("/services/async-leaf")
+        assert response.status_code == 200
+        payload = response.json()
+        assert set(payload) == {"kind", "token"}
+        assert payload["kind"] == "async-leaf"
+        tokens.append(str(UUID(payload["token"])))
+    assert len(set(tokens)) == 2
+
+
+@pytest.mark.asyncio
+async def test_async_leaf_factory_handles_parallel_requests(
+    http_client: httpx.AsyncClient,
+) -> None:
+    responses = await asyncio.gather(
+        *(http_client.get("/services/async-leaf") for _ in range(24)),
+    )
+    tokens: list[str] = []
+    for response in responses:
+        assert response.status_code == 200
+        payload = response.json()
+        assert set(payload) == {"kind", "token"}
+        assert payload["kind"] == "async-leaf"
+        tokens.append(str(UUID(payload["token"])))
+    assert len(set(tokens)) == 24

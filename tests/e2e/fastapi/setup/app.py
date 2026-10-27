@@ -2,14 +2,16 @@ import uvicorn
 from fastapi import FastAPI
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
-from diwire import Container, Injected, Scope, resolver_context
+from diwire import Container, Injected, Lifetime, Scope, resolver_context
 from diwire.integrations.fastapi import RequestContextMiddleware, add_request_context
 from tests.e2e.fastapi.setup.config import FastAPIE2ESettings
 from tests.e2e.fastapi.setup.services import (
+    AsyncLeafService,
     CMService,
     RequestBasedService,
     RequestWithCustomStateService,
     WebSocketBasedService,
+    provide_async_leaf_service,
 )
 
 app = FastAPI()
@@ -56,9 +58,20 @@ async def cm_service(service: Injected[CMService]) -> str:
     return service.work()
 
 
+@app.get("/services/async-leaf")
+@resolver_context.inject(scope=Scope.REQUEST)
+async def async_leaf_service(service: Injected[AsyncLeafService]) -> dict[str, str]:
+    return {"kind": "async-leaf", "token": service.token}
+
+
 def main() -> None:
     container = Container()
     add_request_context(container)
+    container.add_factory(
+        provide_async_leaf_service,
+        lifetime=Lifetime.TRANSIENT,
+        scope=Scope.REQUEST,
+    )
     container.add_context_manager(CMService, scope=Scope.REQUEST)
 
     settings = container.resolve(FastAPIE2ESettings)

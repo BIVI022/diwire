@@ -3089,6 +3089,14 @@ def _build_sync_slot_impl(*, workflow: ProviderWorkflowPlan) -> Callable[[Any], 
 
 
 def _build_async_slot_impl(*, workflow: ProviderWorkflowPlan) -> Callable[[Any], Awaitable[Any]]:
+    direct_async_factory = (
+        workflow.provider_attribute == "factory"
+        and workflow.is_provider_async
+        and not workflow.dependency_plans
+        and not workflow.dependencies
+        and not workflow.provider_is_inject_wrapper
+    )
+
     async def _impl(self: Any) -> Any:
         runtime = type(self)._runtime
         class_scope_level = type(self)._class_plan.scope_level
@@ -3176,12 +3184,15 @@ def _build_async_slot_impl(*, workflow: ProviderWorkflowPlan) -> Callable[[Any],
                 return value
             return cached_value
 
-        value = await _build_local_value_async(
-            runtime=runtime,
-            resolver=self,
-            workflow=workflow,
-            provider_scope_resolver=provider_scope_resolver,
-        )
+        if direct_async_factory:
+            value = await runtime.provider_by_slot[workflow.slot]()
+        else:
+            value = await _build_local_value_async(
+                runtime=runtime,
+                resolver=self,
+                workflow=workflow,
+                provider_scope_resolver=provider_scope_resolver,
+            )
         _replace_async_cache(
             runtime=runtime,
             resolver=self,

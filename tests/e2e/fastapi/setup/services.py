@@ -1,5 +1,7 @@
+import asyncio
 from dataclasses import dataclass
 from types import TracebackType
+from uuid import uuid4
 
 from starlette.datastructures import State
 from starlette.requests import Request
@@ -50,3 +52,13 @@ class CMService:
         exc_tb: TracebackType | None,
     ) -> None:
         print("CMService __exit__")
+
+
+@dataclass
+class AsyncLeafService:
+    token: str
+
+
+async def provide_async_leaf_service() -> AsyncLeafService:
+    await asyncio.sleep(0)
+    return AsyncLeafService(token=str(uuid4()))
