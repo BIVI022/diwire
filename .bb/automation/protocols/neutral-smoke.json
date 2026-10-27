@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "targets": ["tests/benchmarks/test_resolve_transient.py::test_benchmark_diwire_resolve_transient"],
+  "protected": ["tests/benchmarks/test_resolve_singleton.py::test_benchmark_diwire_resolve_singleton"],
+  "practical_gain_floor": 0.05,
+  "allowed_regression": 0.02,
+  "baseline_spread_ceiling": 0.1,
+  "pair_count": 5,
+  "calibration_count": 3,
+  "process_timeout_seconds": 180,
+  "maximum_seconds": 1200,
+  "plan_path": ".bb/automation/protocols/neutral-smoke.md",
+  "gain_rationale": "A five percent throughput floor is deliberately above zero for this neutral smoke check; identical source must never be accepted as an optimization."
+}
