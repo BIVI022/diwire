@@ -94,8 +94,8 @@ export function readSnapshot(repo, number, expectedHead, measurementUrl, reviewN
   const byContext = new Map();
   for (const s of statusPages.flat()) if (!byContext.has(s.context)) byContext.set(s.context, s);
   const statuses = [...byContext.values()];
-  // The commit date may precede a delayed push. A review/CI start is a conservative
-  // observable lower bound for a push and starts a fresh wait after each head.
+  // Keep observed event times for audit. The review clock comes from the
+  // dispatcher and does not move when a status or check completes.
   const headPushedAt = [...checks.map(x => x.started_at), ...statuses.map(x => x.created_at)].filter(Boolean).sort().at(-1);
   const match = /^https:\/\/github.com\/maksimzayats\/diwire\/actions\/runs\/(\d+)$/.exec(measurementUrl ?? "");
   const run = match ? gh(["api", `repos/${repo}/actions/runs/${match[1]}`]) : null;
