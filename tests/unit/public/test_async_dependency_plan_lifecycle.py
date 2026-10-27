@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import sys
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -73,8 +74,11 @@ async def test_cancellation_in_dependency_preserves_cleanup_and_allows_next_scop
         task = asyncio.create_task(resolve())
         await asyncio.wait_for(entered.wait(), 5)
         task.cancel("cancel dependency")
-        with pytest.raises(asyncio.CancelledError, match="cancel dependency"):
+        # Python 3.10 can lose the message when cancellation passes through a task.
+        message = "cancel dependency" if sys.version_info >= (3, 11) else None
+        with pytest.raises(asyncio.CancelledError, match=message):
             await task
+        assert task.cancelled()
         assert events == [
             "resource:open",
             "managed:open",
