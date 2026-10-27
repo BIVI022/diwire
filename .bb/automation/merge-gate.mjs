@@ -35,7 +35,7 @@ export function evaluate(snapshot, evidence, expectedHead, now = Date.now()) {
   }
   for (const status of snapshot.statuses) if (status.state !== "success") errors.push(`Status is not green: ${status.context}`);
   const coderabbit = snapshot.statuses.find(c => c.context === "CodeRabbit");
-  const review = snapshot.reviews.find(r => r.commit?.oid === expectedHead && /coderabbit/i.test(r.author?.login ?? "") && ["APPROVED", "COMMENTED"].includes(r.state));
+  const review = snapshot.reviews.find(r => r.commit?.oid === expectedHead && /coderabbit/i.test(r.author?.login ?? "") && r.state === "APPROVED");
   const completedStatus = coderabbit?.state === "success" && ["review completed", "review completed successfully"].includes((coderabbit.description ?? "").trim().toLowerCase());
   const fallback = snapshot.independentReviewVerified && snapshot.independentReview?.head_sha === expectedHead && snapshot.independentReview?.base_sha === snapshot.currentMain && snapshot.independentReview?.review_inventory_sha256 === reviewInventoryHash(snapshot);
   if (!review && !completedStatus && !fallback) errors.push("No completed configured or verified independent AI review for this exact head");

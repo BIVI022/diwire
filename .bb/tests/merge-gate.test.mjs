@@ -11,7 +11,7 @@ function fixture() {
     currentMain: base, baseComparison: {status: "ahead"}, headPushedAt: "2026-10-27T11:40:00Z", reviewNotBefore: "2026-10-27T11:50:00Z",
     checks: required.map(name => ({name, status: "completed", conclusion: "success"})),
     statuses: [{context: "CodeRabbit", state: "success"}],
-    reviews: [{id: "review1", author: {login: "coderabbitai"}, commit: {oid: head}, state: "COMMENTED"}],
+    reviews: [{id: "review1", author: {login: "coderabbitai"}, commit: {oid: head}, state: "APPROVED"}],
     comments: [{id: "comment1"}], threads: [{isResolved: true, comments: [{id: "inline1"}]}],
     measurementRun: {headSha: head, status: "completed", conclusion: "success", workflowPath: ".github/workflows/bb-performance.yaml", event: "workflow_dispatch"},
     measurementArtifactsVerified: true,
@@ -110,6 +110,15 @@ test("a successful status without review evidence cannot approve",()=>{
 test("a negated completion description cannot approve",()=>{
   const {snapshot,evidence}=fixture();snapshot.reviews=[];
   snapshot.statuses[0].description="Review could not be completed";
+  evidence.review_inventory_sha256=reviewInventoryHash(snapshot);
+  assert.equal(evaluate(snapshot,evidence,head,now).ready,false);
+});
+
+test("a reply-only review does not replace a rate-limited full review",()=>{
+  const {snapshot,evidence}=fixture();
+  snapshot.reviews[0].state="COMMENTED";
+  snapshot.reviews[0].body="";
+  snapshot.statuses[0].description="Review rate limited";
   evidence.review_inventory_sha256=reviewInventoryHash(snapshot);
   assert.equal(evaluate(snapshot,evidence,head,now).ready,false);
 });
