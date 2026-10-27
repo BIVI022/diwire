@@ -40,7 +40,7 @@ jobs:
       BASE_SHA: ${{ inputs.base_sha }}
       CANDIDATE_SHA: ${{ inputs.candidate_sha || github.sha }}
       PROTOCOL: ${{ inputs.protocol }}
-      EVIDENCE: ${{ runner.temp }}/bb-performance-${{ github.run_id }}-${{ github.run_attempt }}
+      EVIDENCE: /tmp/bb-performance-${{ github.run_id }}-${{ github.run_attempt }}
       UV_PYTHON: "3.14.7"
     steps:
       - name: Start partial evidence record
