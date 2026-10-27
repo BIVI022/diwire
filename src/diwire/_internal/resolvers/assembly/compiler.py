@@ -3665,57 +3665,54 @@ def _resolve_dependency_value_sync(
     )
 
 
-def _resolve_dependency_value_async(
+async def _resolve_dependency_value_async(
     *,
     runtime: _ResolverRuntime,
     resolver: Any,
     dependency_plan: ProviderDependencyPlan,
-) -> Awaitable[Any]:
-    async def _run() -> Any:
-        if dependency_plan.kind == "omit":
-            return _OMIT_ARGUMENT
+) -> Any:
+    if dependency_plan.kind == "omit":
+        return _OMIT_ARGUMENT
 
-        if dependency_plan.kind == "literal":
-            return _literal_value_for_plan(dependency_plan=dependency_plan)
+    if dependency_plan.kind == "literal":
+        return _literal_value_for_plan(dependency_plan=dependency_plan)
 
-        if dependency_plan.kind == "provider_handle":
-            provider_inner_slot = dependency_plan.provider_inner_slot
-            if provider_inner_slot is None:
-                msg = "Missing provider inner slot for provider-handle dependency plan."
-                raise ValueError(msg)
-
-            if dependency_plan.provider_is_async:
-                return lambda: getattr(resolver, f"aresolve_{provider_inner_slot}")()
-            return lambda: getattr(resolver, f"resolve_{provider_inner_slot}")()
-
-        if dependency_plan.kind == "all":
-            if not dependency_plan.all_slots:
-                return ()
-
-            values: list[Any] = []
-            for slot in dependency_plan.all_slots:
-                dependency_workflow = runtime.workflows_by_slot[slot]
-                value = await _dependency_value_for_slot_async(
-                    resolver=resolver,
-                    dependency_workflow=dependency_workflow,
-                    dependency_requires_async=dependency_workflow.requires_async,
-                )
-                values.append(value)
-            return tuple(values)
-
-        dependency_slot = dependency_plan.dependency_slot
-        if dependency_slot is None:
-            msg = "Provider dependency plan is missing dependency slot."
+    if dependency_plan.kind == "provider_handle":
+        provider_inner_slot = dependency_plan.provider_inner_slot
+        if provider_inner_slot is None:
+            msg = "Missing provider inner slot for provider-handle dependency plan."
             raise ValueError(msg)
 
-        dependency_workflow = runtime.workflows_by_slot[dependency_slot]
-        return await _dependency_value_for_slot_async(
-            resolver=resolver,
-            dependency_workflow=dependency_workflow,
-            dependency_requires_async=dependency_plan.dependency_requires_async,
-        )
+        if dependency_plan.provider_is_async:
+            return lambda: getattr(resolver, f"aresolve_{provider_inner_slot}")()
+        return lambda: getattr(resolver, f"resolve_{provider_inner_slot}")()
 
-    return _run()
+    if dependency_plan.kind == "all":
+        if not dependency_plan.all_slots:
+            return ()
+
+        values: list[Any] = []
+        for slot in dependency_plan.all_slots:
+            dependency_workflow = runtime.workflows_by_slot[slot]
+            value = await _dependency_value_for_slot_async(
+                resolver=resolver,
+                dependency_workflow=dependency_workflow,
+                dependency_requires_async=dependency_workflow.requires_async,
+            )
+            values.append(value)
+        return tuple(values)
+
+    dependency_slot = dependency_plan.dependency_slot
+    if dependency_slot is None:
+        msg = "Provider dependency plan is missing dependency slot."
+        raise ValueError(msg)
+
+    dependency_workflow = runtime.workflows_by_slot[dependency_slot]
+    return await _dependency_value_for_slot_async(
+        resolver=resolver,
+        dependency_workflow=dependency_workflow,
+        dependency_requires_async=dependency_plan.dependency_requires_async,
+    )
 
 
 def _dependency_value_for_slot_sync(

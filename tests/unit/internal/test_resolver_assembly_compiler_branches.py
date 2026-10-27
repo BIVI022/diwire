@@ -4872,3 +4872,149 @@ async def test_generator_cleanup_enabled_branches_raise_when_generator_does_not_
             provider_scope_resolver=scope_resolver,
             provider=_empty_generator,
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["omit", "literal", "provider_handle", "all", "provider"])
+async def test_async_dependency_plan_reads_are_deferred_until_await(kind: str) -> None:
+    reads: list[str] = []
+    plan = ProviderDependencyPlan(
+        kind=cast("Any", kind),
+        dependency=_dependency(),
+        dependency_index=0,
+        dependency_slot=1,
+        dependency_requires_async=False,
+        all_slots=(1,),
+        provider_inner_slot=1,
+        literal_expression="None",
+    )
+
+    class ObservedPlan:
+        def __getattr__(self, name: str) -> Any:
+            reads.append(name)
+            return getattr(plan, name)
+
+    runtime = _runtime(scopes=(_scope_plan(level=1, name="app"),), workflows=())
+    resolver = SimpleNamespace(resolve_2=lambda: 42)
+    pending = compiler_module._resolve_dependency_value_async(
+        runtime=runtime,
+        resolver=resolver,
+        dependency_plan=cast("Any", ObservedPlan()),
+    )
+    assert reads == []
+    # A plan must use the workflow mapping present when it is awaited.
+    runtime.workflows_by_slot[1] = _workflow_plan(slot=2, is_cached=False)
+    value = await pending
+    assert reads[0] == "kind"
+    if kind == "omit":
+        assert value is compiler_module._OMIT_ARGUMENT
+    elif kind == "literal":
+        assert value is None
+    elif kind == "provider_handle":
+        resolver.resolve_1 = lambda: 43
+        assert value() == 43
+        resolver.resolve_1 = lambda: 44
+        assert value() == 44
+    elif kind == "all":
+        assert value == (42,)
+    else:
+        assert value == 42
+
+
+@pytest.mark.asyncio
+async def test_async_dependency_plan_preserves_deferred_error_identity() -> None:
+    error = LookupError("dependency lookup failed")
+
+    class FailingWorkflows(dict[int, ProviderWorkflowPlan]):
+        def __getitem__(self, key: int) -> ProviderWorkflowPlan:
+            raise error
+
+    runtime = _runtime(scopes=(_scope_plan(level=1, name="app"),), workflows=())
+    runtime.workflows_by_slot = FailingWorkflows()
+    pending = compiler_module._resolve_dependency_value_async(
+        runtime=runtime,
+        resolver=SimpleNamespace(),
+        dependency_plan=ProviderDependencyPlan(
+            kind="provider",
+            dependency=_dependency(),
+            dependency_index=0,
+            dependency_slot=1,
+        ),
+    )
+    with pytest.raises(LookupError) as raised:
+        await pending
+    assert raised.value is error
+
+
+@pytest.mark.asyncio
+async def test_async_dependency_collection_preserves_order_and_sync_awaitable() -> None:
+    events: list[str] = []
+    value = object()
+    sync_awaitable: asyncio.Future[object] = asyncio.get_running_loop().create_future()
+
+    async def first() -> object:
+        events.append("first:start")
+        await asyncio.sleep(0)
+        events.append("first:end")
+        return value
+
+    def second() -> asyncio.Future[object]:
+        events.append("second")
+        return sync_awaitable
+
+    runtime = _runtime(
+        scopes=(_scope_plan(level=1, name="app"),),
+        workflows=(
+            _workflow_plan(slot=1, is_cached=False, requires_async=True),
+            _workflow_plan(slot=2, is_cached=False),
+        ),
+    )
+    result = await compiler_module._resolve_dependency_value_async(
+        runtime=runtime,
+        resolver=SimpleNamespace(aresolve_1=first, resolve_2=second),
+        dependency_plan=ProviderDependencyPlan(
+            kind="all",
+            dependency=_dependency(),
+            dependency_index=0,
+            all_slots=(1, 2),
+        ),
+    )
+    assert result == (value, sync_awaitable)
+    assert not sync_awaitable.done()
+    assert events == ["first:start", "first:end", "second"]
+    sync_awaitable.cancel()
+
+
+@pytest.mark.asyncio
+async def test_async_dependency_collection_stops_at_the_first_error() -> None:
+    error = RuntimeError("first provider failed")
+    events: list[str] = []
+
+    async def first() -> object:
+        events.append("first")
+        raise error
+
+    def second() -> object:
+        events.append("second")
+        return object()
+
+    runtime = _runtime(
+        scopes=(_scope_plan(level=1, name="app"),),
+        workflows=(
+            _workflow_plan(slot=1, is_cached=False, requires_async=True),
+            _workflow_plan(slot=2, is_cached=False),
+        ),
+    )
+    with pytest.raises(RuntimeError) as raised:
+        await compiler_module._resolve_dependency_value_async(
+            runtime=runtime,
+            resolver=SimpleNamespace(aresolve_1=first, resolve_2=second),
+            dependency_plan=ProviderDependencyPlan(
+                kind="all",
+                dependency=_dependency(),
+                dependency_index=0,
+                all_slots=(1, 2),
+            ),
+        )
+    assert raised.value is error
+    assert events == ["first"]
