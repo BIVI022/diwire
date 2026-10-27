@@ -2,6 +2,7 @@
   "review_not_before": "UTC_ISO_TIME_FROM_DISPATCHER_CONTEXT",
   "head_sha": "FULL_CURRENT_PR_HEAD_SHA",
   "base_sha": "FULL_CURRENT_MAIN_SHA",
+  "independent_ai_review_path": null,
   "semantic_review": "passed",
   "measurement_review": "passed",
   "lint": "passed",

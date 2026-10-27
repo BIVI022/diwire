@@ -27,7 +27,7 @@ After any source or test change, repeat relevant tests, the complete quality gat
 Merge only when all conditions hold for the exact current head:
 - the branch contains fetched current main and has no conflicts;
 - normal CI and all observed validation checks pass; only documented conditional jobs may be skipped;
-- a configured AI reviewer explicitly completed for that head, and independent semantic and measurement reviews pass;
+- a configured AI reviewer explicitly completed for that head, or a fresh independent BB AI reviewer completed an exact-head and exact-base final review of the complete current PR feedback; independent semantic and measurement reviews must also pass;
 - no blocking finding, change request or unresolved review thread remains;
 - accepted performance evidence and final E2E evidence apply to this head.
 
@@ -38,3 +38,5 @@ Use the normal squash method with --match-head-commit FULL_SHA. Use no admin byp
 Only the visible root job thread records dispatcher state. Workflow workers return structured results to the root. Read the appended job JSON for config/state paths and the record command. Record current BB_THREAD_ID and BB_ENVIRONMENT_ID, actual workspace, exact PR head and evidence. A new follow-up thread can use the same worktree; each day uses a fresh visible thread. Worker errors must not become accepted results. Leave a durable blocked or inconclusive receipt before ending on a blocker.
 
 PR #298 has an unresolved historical settings-registration performance signal. Read its saved measurement receipt before related work. Keep it as a release blocker until a controlled current-source comparison or validated fix clears it. It does not block independent daily hypotheses.
+
+A green CodeRabbit status that says rate limited or skipped is not completed review. When the configured reviewer cannot run, use a separate read-only BB AI review thread in this project. Its report must bind the full head, base and current review inventory hash, contain no blocking finding, and identify its reviewer thread. Supply that actual report through independent_ai_review_path to the merge helper. A timeout or missing report is never approval.

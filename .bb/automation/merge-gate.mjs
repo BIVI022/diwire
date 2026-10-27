@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { readFileSync, writeFileSync, mkdtempSync, rmSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdtempSync, rmSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve, sep } from "node:path";
+import { join, resolve, sep, isAbsolute, dirname, basename } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const requiredChecks = [
@@ -36,7 +36,9 @@ export function evaluate(snapshot, evidence, expectedHead, now = Date.now()) {
   for (const status of snapshot.statuses) if (status.state !== "success") errors.push(`Status is not green: ${status.context}`);
   const coderabbit = snapshot.statuses.find(c => c.context === "CodeRabbit");
   const review = snapshot.reviews.find(r => r.commit?.oid === expectedHead && /coderabbit/i.test(r.author?.login ?? "") && ["APPROVED", "COMMENTED"].includes(r.state));
-  if (!review && coderabbit?.state !== "success") errors.push("Configured AI review has not completed on this head");
+  const completedStatus = coderabbit?.state === "success" && ["review completed", "review completed successfully"].includes((coderabbit.description ?? "").trim().toLowerCase());
+  const fallback = snapshot.independentReviewVerified && snapshot.independentReview?.head_sha === expectedHead && snapshot.independentReview?.base_sha === snapshot.currentMain && snapshot.independentReview?.review_inventory_sha256 === reviewInventoryHash(snapshot);
+  if (!review && !completedStatus && !fallback) errors.push("No completed configured or verified independent AI review for this exact head");
   if (snapshot.threads.some(t => !t.isResolved)) errors.push("Unresolved review threads remain");
   const latestReviews = new Map();
   for (const r of snapshot.reviews) if (["APPROVED", "CHANGES_REQUESTED", "DISMISSED"].includes(r.state)) latestReviews.set(r.author?.login, r);
@@ -73,7 +75,7 @@ function pages(query, select, request = gh) {
   } while (cursor);
   return items;
 }
-export function readSnapshot(repo, number, expectedHead, measurementUrl, reviewNotBefore, request = gh) {
+export function readSnapshot(repo, number, expectedHead, measurementUrl, reviewNotBefore, request = gh, independentReviewPath) {
   if (repo !== "maksimzayats/diwire" || !Number.isSafeInteger(number) || number <= 0 || !shaPattern.test(expectedHead)) throw new Error("Invalid repository, PR or head");
   const pr = request(["pr", "view", String(number), "--repo", repo, "--json", "state,isDraft,headRefOid,baseRefOid,baseRefName,mergeable,reviewDecision"]);
   const currentMain = request(["api", `repos/${repo}/commits/main`]).sha;
@@ -117,7 +119,29 @@ export function readSnapshot(repo, number, expectedHead, measurementUrl, reviewN
       measurementArtifactsVerified = true;
     } finally { rmSync(temp, {recursive: true, force: true}); }
   }
-  return {pr, currentMain, baseComparison, comments, reviews, threads, checks, statuses, headPushedAt, reviewNotBefore, measurementRun, measurementDecision, measurementArtifactsVerified};
+  const independent = independentReviewPath ? verifyIndependentReview(independentReviewPath) : {report:null,verified:false};
+  const independentReview = independent.report;
+  const independentReviewVerified = independent.verified;
+  return {pr, currentMain, baseComparison, comments, reviews, threads, checks, statuses, headPushedAt, reviewNotBefore, measurementRun, measurementDecision, measurementArtifactsVerified, independentReview, independentReviewVerified};
+}
+export function verifyIndependentReview(path, request = args => JSON.parse(execFileSync("bb", args, {encoding:"utf8",maxBuffer:1024*1024})), context = {threadId:process.env.BB_THREAD_ID,threadStorage:process.env.BB_THREAD_STORAGE}) {
+  if (!isAbsolute(path) || !context.threadId || !context.threadStorage) throw new Error("Independent verification requires an absolute report and BB thread context");
+  const callerRoot = realpathSync(context.threadStorage);
+  if (basename(callerRoot) !== context.threadId) throw new Error("Caller storage does not match its BB thread");
+  const base = dirname(callerRoot);
+  const report = JSON.parse(readFileSync(path,"utf8"));
+  const id = report.reviewer_thread_id;
+  if (!/^thr_[a-z0-9]+$/.test(id ?? "") || id === context.threadId) throw new Error("A separate BB reviewer thread is required");
+  const expectedRoot = join(base,id);
+  const canonicalRoot = realpathSync(expectedRoot);
+  const canonicalReport = realpathSync(path);
+  if (dirname(canonicalRoot) !== base || basename(canonicalRoot) !== id || !canonicalReport.startsWith(canonicalRoot + sep)) throw new Error("Report is outside canonical reviewer storage");
+  const info = request(["thread","show",id,"--json"]);
+  const catalog = request(["thread","list","--project","proj_hypmgayr8j","--json"]);
+  const row = Array.isArray(catalog) ? catalog.find(x => x.id === id) : null;
+  const noActivity = row && row.activity && Object.values(row.activity).every(x => !x);
+  const verified = info.thread.projectId === "proj_hypmgayr8j" && info.thread.status === "idle" && !!info.thread.providerId && !info.thread.activeBackgroundAgentCount && !info.thread.queuedMessageCount && noActivity && report.verdict === "passed" && Array.isArray(report.blocking_findings) && report.blocking_findings.length === 0;
+  return {report,verified:!!verified};
 }
 export function main(argv) {
   const values = new Map();
@@ -127,7 +151,7 @@ export function main(argv) {
     values.set(argv[i], argv[i + 1]);
   }
   const evidence = JSON.parse(readFileSync(values.get("--evidence"), "utf8"));
-  const snapshot = readSnapshot(values.get("--repo"), Number(values.get("--pr")), values.get("--head"), evidence.measurement?.run_url, values.get("--review-not-before"));
+  const snapshot = readSnapshot(values.get("--repo"), Number(values.get("--pr")), values.get("--head"), evidence.measurement?.run_url, values.get("--review-not-before"), undefined, evidence.independent_ai_review_path);
   const verdict = evaluate(snapshot, evidence, values.get("--head"));
   const output = values.get("--output");
   if (!output) throw new Error("An output receipt path is required");
@@ -136,7 +160,7 @@ export function main(argv) {
   if (values.get("--merge")) {
     // Re-read after the inventory/evidence checks. The SHA fence below also
     // prevents a push racing the merge from changing the accepted head.
-    const final = readSnapshot(values.get("--repo"), Number(values.get("--pr")), values.get("--head"), evidence.measurement?.run_url, values.get("--review-not-before"));
+    const final = readSnapshot(values.get("--repo"), Number(values.get("--pr")), values.get("--head"), evidence.measurement?.run_url, values.get("--review-not-before"), undefined, evidence.independent_ai_review_path);
     const gate = evaluate(final, evidence, values.get("--head"));
     if (!gate.ready) throw new Error("Merge conditions changed: " + gate.errors.join("; "));
     execFileSync("gh", ["pr", "merge", values.get("--pr"), "--repo", values.get("--repo"), "--squash", "--match-head-commit", values.get("--head")], {stdio: "inherit"});

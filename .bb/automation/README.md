@@ -91,3 +91,9 @@ Run `node --test .bb/tests/daily-perf.test.mjs` and validate the saved workflow 
 workspace contains that file. Run `make lint` and `make test`. Finish implementation
 verification with `make test-e2e-fastapi`. Runtime source is not changed by the
 pipeline setup itself.
+
+A configured review marked rate limited or skipped is not approval. A fresh
+independent BB AI reviewer may supply the final review instead. The merge helper
+checks its completed project thread, report, exact head/base and current review
+inventory hash. This fallback preserves review without waiting indefinitely for
+a configured reviewer's quota. Missing evidence keeps the PR open.

@@ -74,3 +74,42 @@ test("review comments are fully paged even in a resolved thread", () => {
   assert.equal(snapshot.threads[0].comments.length, 101);
   assert.equal(snapshot.threads[0].comments[100].id, "last");
 });
+
+test("a successful rate-limit status is not a completed AI review",()=>{
+  const {snapshot,evidence}=fixture();
+  snapshot.reviews=[];
+  snapshot.statuses[0].description="Review rate limited";
+  evidence.review_inventory_sha256=reviewInventoryHash(snapshot);
+  assert.equal(evaluate(snapshot,evidence,head,now).ready,false);
+});
+test("a verified independent review can replace a rate-limited configured review",()=>{
+  const {snapshot,evidence}=fixture();
+  snapshot.reviews=[];
+  snapshot.statuses[0].description="Review rate limited";
+  evidence.review_inventory_sha256=reviewInventoryHash(snapshot);
+  snapshot.independentReviewVerified=true;
+  snapshot.independentReview={head_sha:head,base_sha:base,review_inventory_sha256:reviewInventoryHash(snapshot)};
+  assert.equal(evaluate(snapshot,evidence,head,now).ready,true);
+  snapshot.independentReview.head_sha=base;
+  assert.equal(evaluate(snapshot,evidence,head,now).ready,false);
+});
+test("an explicit completed-review status is accepted",()=>{
+  const {snapshot,evidence}=fixture();
+  snapshot.reviews=[];
+  snapshot.statuses[0].description="Review completed";
+  evidence.review_inventory_sha256=reviewInventoryHash(snapshot);
+  assert.equal(evaluate(snapshot,evidence,head,now).ready,true);
+});
+test("a successful status without review evidence cannot approve",()=>{
+  const {snapshot,evidence}=fixture();
+  snapshot.reviews=[];
+  evidence.review_inventory_sha256=reviewInventoryHash(snapshot);
+  assert.equal(evaluate(snapshot,evidence,head,now).ready,false);
+});
+
+test("a negated completion description cannot approve",()=>{
+  const {snapshot,evidence}=fixture();snapshot.reviews=[];
+  snapshot.statuses[0].description="Review could not be completed";
+  evidence.review_inventory_sha256=reviewInventoryHash(snapshot);
+  assert.equal(evaluate(snapshot,evidence,head,now).ready,false);
+});
