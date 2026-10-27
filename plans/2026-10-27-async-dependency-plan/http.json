@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "targets": [
+    "tests/performance/test_dependency_plan_workloads.py::test_benchmark_diwire_dependency_plan_http[large]"
+  ],
+  "protected": [
+    "tests/performance/test_dependency_plan_workloads.py::test_benchmark_diwire_dependency_plan_http[small]",
+    "tests/performance/test_dependency_plan_workloads.py::test_benchmark_diwire_dependency_plan_http[plain]"
+  ],
+  "practical_gain_floor": 0.01,
+  "allowed_regression": 0.02,
+  "baseline_spread_ceiling": 0.02,
+  "pair_count": 9,
+  "calibration_count": 3,
+  "process_timeout_seconds": 180,
+  "maximum_seconds": 4200,
+  "plan_path": "plans/2026-10-27-async-dependency-plan/plan.md",
+  "gain_rationale": "Require more than 1% socket HTTP throughput gain on the 17-edge graph as the minimum useful application contribution for this one-helper change."
+}

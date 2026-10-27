@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "targets": [
+    "tests/performance/test_dependency_plan_workloads.py::test_benchmark_diwire_dependency_plan_public[mixed-5]",
+    "tests/performance/test_dependency_plan_workloads.py::test_benchmark_diwire_dependency_plan_public[mixed-17]"
+  ],
+  "protected": [
+    "tests/benchmarks/test_enter_close_scope_no_resolve.py::test_benchmark_diwire_enter_close_scope_no_resolve",
+    "tests/benchmarks/test_enter_close_scope_resolve_100_instance.py::test_benchmark_diwire_enter_close_scope_resolve_100",
+    "tests/benchmarks/test_enter_close_scope_resolve_generator_request_try_finally.py::test_benchmark_diwire_enter_close_scope_resolve_generator_request_try_finally",
+    "tests/benchmarks/test_enter_close_scope_resolve_once.py::test_benchmark_diwire_enter_close_scope_resolve_once",
+    "tests/benchmarks/test_enter_close_scope_resolve_open_generic_scoped.py::test_benchmark_diwire_enter_close_scope_resolve_open_generic_scoped",
+    "tests/benchmarks/test_enter_close_scope_resolve_scoped_100.py::test_benchmark_diwire_enter_close_scope_resolve_scoped_100",
+    "tests/benchmarks/test_resolve_deep_transient_chain.py::test_benchmark_diwire_resolve_deep_transient_chain",
+    "tests/benchmarks/test_resolve_generated_scoped_grid.py::test_benchmark_diwire_resolve_generated_scoped_grid",
+    "tests/benchmarks/test_resolve_mixed_lifetimes.py::test_benchmark_diwire_resolve_mixed_lifetimes",
+    "tests/benchmarks/test_resolve_open_generic_transient.py::test_benchmark_diwire_resolve_open_generic_transient",
+    "tests/benchmarks/test_resolve_scoped.py::test_benchmark_diwire_resolve_scoped",
+    "tests/benchmarks/test_resolve_scoped_with_registered_open_closed_generics.py::test_benchmark_diwire_resolve_scoped_with_registered_open_closed_generics",
+    "tests/benchmarks/test_resolve_scoped_with_registered_open_closed_generics_pair_alternating.py::test_benchmark_diwire_resolve_scoped_with_registered_open_closed_generics_pair_alternating",
+    "tests/benchmarks/test_resolve_scoped_with_registered_open_closed_generics_pair_same.py::test_benchmark_diwire_resolve_scoped_with_registered_open_closed_generics_pair_same",
+    "tests/benchmarks/test_resolve_singleton.py::test_benchmark_diwire_resolve_singleton",
+    "tests/benchmarks/test_resolve_transient.py::test_benchmark_diwire_resolve_transient",
+    "tests/benchmarks/test_resolve_wide_transient_graph.py::test_benchmark_diwire_resolve_wide_transient_graph",
+    "tests/performance/test_dependency_plan_workloads.py::test_benchmark_diwire_dependency_plan_public[all_async-5]",
+    "tests/performance/test_dependency_plan_workloads.py::test_benchmark_diwire_dependency_plan_public[all_async-17]"
+  ],
+  "practical_gain_floor": 0.03,
+  "allowed_regression": 0.02,
+  "baseline_spread_ceiling": 0.02,
+  "pair_count": 9,
+  "calibration_count": 3,
+  "process_timeout_seconds": 180,
+  "maximum_seconds": 4200,
+  "plan_path": "plans/2026-10-27-async-dependency-plan/plan.md",
+  "gain_rationale": "Require more than 3% throughput gain on each mixed public graph to justify a runtime change on both the representative small graph and the scaling graph."
+}
