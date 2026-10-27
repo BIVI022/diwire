@@ -92,7 +92,7 @@ jobs:
           exit 0
 
       - name: Check exact candidate formatting, lint and types
-        if: ${{ inputs.quality_mode && steps.measurement.outcome == 'success' }}
+        if: ${{ inputs.quality_mode && steps.measurement.outputs.exit_code == '0' }}
         run: |
           mkdir -p "$EVIDENCE"
           test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
@@ -101,12 +101,12 @@ jobs:
           make lint 2>&1 | tee "$EVIDENCE/quality-lint.log"
 
       - name: Test exact candidate with full coverage and API checks
-        if: ${{ inputs.quality_mode && steps.measurement.outcome == 'success' && !cancelled() }}
+        if: ${{ inputs.quality_mode && steps.measurement.outputs.exit_code == '0' && !cancelled() }}
         run: make test 2>&1 | tee "$EVIDENCE/quality-test.log"
 
       # This is the final validation step, after measurements and all other quality checks.
       - name: Final FastAPI E2E on the exact candidate
-        if: ${{ inputs.quality_mode && steps.measurement.outcome == 'success' && !cancelled() }}
+        if: ${{ inputs.quality_mode && steps.measurement.outputs.exit_code == '0' && !cancelled() }}
         run: make test-e2e-fastapi 2>&1 | tee "$EVIDENCE/quality-fastapi-e2e.log"
 
       - name: Upload complete or partial evidence
