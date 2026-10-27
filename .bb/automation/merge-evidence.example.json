@@ -1,4 +1,5 @@
 {
+  "review_not_before": "UTC_ISO_TIME_FROM_DISPATCHER_CONTEXT",
   "head_sha": "FULL_CURRENT_PR_HEAD_SHA",
   "base_sha": "FULL_CURRENT_MAIN_SHA",
   "semantic_review": "passed",
@@ -16,6 +17,7 @@
   "reviewed_review_ids": [],
   "measurement": {
     "outcome": "accepted",
+    "protocol_sha256": "ACTUAL_COMMITTED_PROTOCOL_SHA256",
     "candidate_sha": "FULL_CURRENT_PR_HEAD_SHA",
     "base_sha": "FULL_CURRENT_MAIN_SHA",
     "run_url": "https://github.com/maksimzayats/diwire/actions/runs/ACTUAL_ID"

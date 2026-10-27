@@ -13,6 +13,12 @@ const command = (bin, args) => execFileSync(bin, args, {encoding: "utf8", maxBuf
 const root = command("git", ["rev-parse", "--show-toplevel"]);
 if (command("git", ["status", "--porcelain"])) throw new Error("Install from a clean committed worktree");
 const revision = command("git", ["rev-parse", "HEAD"]);
+const name = "DIWire: daily perf PRs and weekly patch releases";
+const project = options.get("--project");
+const all = JSON.parse(command("bb", ["automation", "list", "--project", project, "--json"]));
+const matches = all.filter(item => item.name === name);
+if (matches.length > 1) throw new Error("Duplicate pipeline schedules need reconciliation");
+if (matches.length) command("bb", ["automation", "pause", matches[0].id, "--project", project, "--json"]);
 const stateRoot = resolve(options.get("--state-root"));
 const checkout = resolve(options.get("--checkout"));
 const runtime = join(stateRoot, "runtime", revision);
@@ -40,15 +46,9 @@ const quote = s => "'" + s.replaceAll("'", "'\\''") + "'";
 const scriptPath = join(stateRoot, "controller.sh");
 writeFileSync(configPath, JSON.stringify(config, null, 2) + "\n", {mode: 0o600});
 writeFileSync(scriptPath, "#!/usr/bin/env bash\nset -euo pipefail\nexec python3 " + [join(runtime, "bb_perf_dispatch.py"), "--config", configPath, "--state-dir", stateDir, "tick"].map(quote).join(" ") + "\n", {mode: 0o700});
-const name = "DIWire: daily perf PRs and weekly patch releases";
-const project = options.get("--project");
-const all = JSON.parse(command("bb", ["automation", "list", "--project", project, "--json"]));
-const matches = all.filter(item => item.name === name);
-if (matches.length > 1) throw new Error("Duplicate pipeline schedules need reconciliation");
 const baseArgs = ["--project", project, "--name", name, "--cron", "*/10 * * * *", "--timezone", "Europe/Minsk", "--script-file", scriptPath, "--timeout", "5m", "--working-directory", "project", "--json"];
 let result;
 if (matches.length) {
-  command("bb", ["automation", "pause", matches[0].id, "--project", project, "--json"]);
   result = JSON.parse(command("bb", ["automation", "update", matches[0].id, ...baseArgs]));
 } else result = JSON.parse(command("bb", ["automation", "create", "--disabled", ...baseArgs]));
 const manifest = {installed_at: new Date().toISOString(), revision, runtime, config_path: configPath, state_dir: stateDir, script_path: scriptPath, fingerprints, automation: result};

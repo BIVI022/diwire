@@ -26,6 +26,13 @@ const resultSchema = {
     pr: { type: "integer", minimum: 0 }, measurement_run_url: { type: "string" },
   },
 };
+const fullSha = /^[0-9a-f]{40}$/;
+const runUrl = /^https:\/\/github.com\/maksimzayats\/diwire\/actions\/runs\/\d+$/;
+function receipt(result, expectedHead, measured = false) {
+  return result && typeof result.evidence_path === "string" && result.evidence_path.startsWith("/") &&
+    fullSha.test(result.head_sha) && (!expectedHead || result.head_sha === expectedHead) &&
+    (!measured || runUrl.test(result.measurement_run_url));
+}
 const findings = await agent(policy + "\nFind evidence-backed performance candidates BEFORE changing code. " +
   "Fetch origin/main. Inspect actual public workloads and profile the suspected costs. " +
   "Read earlier rejected experiments. Choose up to three DISTINCT bounded hypotheses. " +
@@ -58,6 +65,7 @@ for (const candidate of findings.candidates) {
     "No PR yet. Return ready only when this bounded candidate is testable. Return rejected on semantic failure.", {
     label: "Implement " + candidate.id, phase: "Implementation", schema: resultSchema,
   });
+  if (implemented?.outcome === "ready" && !receipt(implemented)) return { outcome: "blocked", attempts, findings, reason: "Implementation receipt is incomplete." };
   if (!implemented || implemented.outcome !== "ready") {
     attempts.push({ candidate, implementation: implemented });
     if (!implemented || implemented.outcome === "blocked") return { outcome: "blocked", attempts, findings };
@@ -74,7 +82,7 @@ for (const candidate of findings.candidates) {
       ". Preserve evidence. Update tests and candidate checkpoint. Reject if the mechanism cannot preserve behavior.", {
       label: "Fix behavior " + candidate.id, phase: "Implementation", schema: resultSchema,
     });
-    if (fixed && fixed.outcome === "ready") {
+    if (fixed && fixed.outcome === "ready" && receipt(fixed)) {
       implemented = fixed;
       semantic = await agent(scope + "\nFresh read-only review of exact fixed candidate: " + JSON.stringify(fixed) +
         ". Reproduce the previous findings and inspect the whole final diff. Return accepted only if all are resolved.", {
@@ -82,6 +90,7 @@ for (const candidate of findings.candidates) {
       });
     }
   }
+  if (semantic?.outcome === "accepted" && !receipt(semantic, implemented.head_sha)) return { outcome: "blocked", attempts, findings, reason: "Behavior review does not match candidate head." };
   if (!semantic || semantic.outcome !== "accepted") {
     attempts.push({ candidate, implementation: implemented, semantic });
     if (!semantic || semantic.outcome === "blocked") return { outcome: "blocked", attempts, findings };
@@ -98,6 +107,7 @@ for (const candidate of findings.candidates) {
     "No PR yet. Return accepted only on useful public-workload benefit with all gates passing on this head.", {
     label: "Validate and measure " + candidate.id, phase: "Validation", schema: resultSchema,
   });
+  if (validation?.outcome === "accepted" && !receipt(validation, implemented.head_sha, true)) return { outcome: "blocked", attempts, findings, reason: "Validation does not match candidate head or run." };
   if (!validation || validation.outcome !== "accepted") {
     attempts.push({ candidate, implementation: implemented, semantic, validation });
     if (!validation || validation.outcome === "blocked") return { outcome: "blocked", attempts, findings };
@@ -111,6 +121,7 @@ for (const candidate of findings.candidates) {
     label: "Audit measurements " + candidate.id, phase: "Measurement review", schema: resultSchema,
   });
   attempts.push({ candidate, implementation: implemented, semantic, validation, measurement });
+  if (measurement?.outcome === "accepted" && (!receipt(measurement, validation.head_sha, true) || measurement.measurement_run_url !== validation.measurement_run_url)) return { outcome: "blocked", attempts, findings, reason: "Independent audit does not match measured head/run." };
   if (!measurement || measurement.outcome !== "accepted") {
     if (!measurement || measurement.outcome === "blocked") return { outcome: "blocked", attempts, findings };
     continue;
@@ -124,7 +135,7 @@ for (const candidate of findings.candidates) {
     "Do not merge. The root records waiting_review; a new follow-up thread will read reviews after ten minutes.", {
     label: "Open measured PR", phase: "Pull request", schema: resultSchema,
   });
-  if (!pr || pr.outcome !== "pr_open" || pr.pr <= 0 || !pr.head_sha || !pr.measurement_run_url) {
+  if (!pr || pr.outcome !== "pr_open" || pr.pr <= 0 || !receipt(pr, validation.head_sha, true) || pr.measurement_run_url !== validation.measurement_run_url) {
     return { outcome: "blocked", attempts, findings, pr, reason: "PR receipt incomplete or not validated." };
   }
   return { ...pr, outcome: "waiting_review", attempts, findings };

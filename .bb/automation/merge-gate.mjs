@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const requiredChecks = [
@@ -23,7 +25,7 @@ export function evaluate(snapshot, evidence, expectedHead, now = Date.now()) {
   if (snapshot.baseComparison?.status !== "ahead" && snapshot.baseComparison?.status !== "identical") errors.push("Candidate does not contain current main");
   if (pr.mergeable !== "MERGEABLE") errors.push("Mergeability is not confirmed");
   if (pr.reviewDecision === "CHANGES_REQUESTED") errors.push("Review requests changes");
-  if (!Number.isFinite(Date.parse(snapshot.headPushedAt)) || now - Date.parse(snapshot.headPushedAt) < 600000) errors.push("Ten-minute review wait after latest push is incomplete");
+  if (!Number.isFinite(Date.parse(snapshot.reviewNotBefore)) || evidence.review_not_before !== snapshot.reviewNotBefore || now < Date.parse(snapshot.reviewNotBefore)) errors.push("Dispatcher review wait is incomplete or its receipt is missing");
   for (const name of requiredChecks) {
     const check = snapshot.checks.find(c => c.name === name);
     if (!check || check.status !== "completed" || check.conclusion !== "success") errors.push(`Required check is not green: ${name}`);
@@ -48,6 +50,9 @@ export function evaluate(snapshot, evidence, expectedHead, now = Date.now()) {
   if (!Array.isArray(evidence.reviewed_comment_ids) || !Array.isArray(evidence.reviewed_review_ids)) errors.push("Review-read inventory is missing");
   if (snapshot.measurementRun?.headSha !== expectedHead || snapshot.measurementRun?.status !== "completed" || snapshot.measurementRun?.conclusion !== "success") errors.push("Remote measurement run is not green for this exact head");
   if (evidence.review_inventory_sha256 !== reviewInventoryHash(snapshot)) errors.push("Review content changed or its read receipt is missing");
+  if (snapshot.measurementRun?.workflowPath !== ".github/workflows/bb-performance.yaml" || snapshot.measurementRun?.event !== "workflow_dispatch") errors.push("Measurement receipt is not the performance workflow");
+  const decision = snapshot.measurementDecision;
+  if (!snapshot.measurementArtifactsVerified || decision?.status !== "accepted" || decision?.identical_source !== false || decision?.base_sha !== snapshot.currentMain || decision?.candidate_sha !== expectedHead || !/^[0-9a-f]{64}$/.test(evidence.measurement?.protocol_sha256 ?? "") || decision?.protocol_sha256 !== evidence.measurement?.protocol_sha256) errors.push("Remote performance decision or artifact hashes are not accepted for these inputs");
   const commentIds = new Set(evidence.reviewed_comment_ids ?? []);
   const reviewIds = new Set(evidence.reviewed_review_ids ?? []);
   for (const item of snapshot.comments) if (!commentIds.has(item.id)) errors.push(`Comment was not included in review receipt: ${item.id}`);
@@ -56,11 +61,11 @@ export function evaluate(snapshot, evidence, expectedHead, now = Date.now()) {
   return { ready: errors.length === 0, errors, head_sha: expectedHead, base_sha: snapshot.currentMain };
 }
 const gh = args => JSON.parse(execFileSync("gh", args, {encoding: "utf8", maxBuffer: 32 * 1024 * 1024}));
-function pages(query, select) {
+function pages(query, select, request = gh) {
   let cursor = null;
   const items = [];
   do {
-    const value = gh(["api", "graphql", "-f", `query=${query}`, ...(cursor ? ["-F", `cursor=${cursor}`] : [])]);
+    const value = request(["api", "graphql", "-f", `query=${query}`, ...(cursor ? ["-F", `cursor=${cursor}`] : [])]);
     const connection = select(value);
     items.push(...connection.nodes);
     cursor = connection.pageInfo.hasNextPage ? connection.pageInfo.endCursor : null;
@@ -68,22 +73,24 @@ function pages(query, select) {
   } while (cursor);
   return items;
 }
-export function readSnapshot(repo, number, expectedHead, measurementUrl) {
+export function readSnapshot(repo, number, expectedHead, measurementUrl, reviewNotBefore, request = gh) {
   if (repo !== "maksimzayats/diwire" || !Number.isSafeInteger(number) || number <= 0 || !shaPattern.test(expectedHead)) throw new Error("Invalid repository, PR or head");
-  const pr = gh(["pr", "view", String(number), "--repo", repo, "--json", "state,isDraft,headRefOid,baseRefOid,baseRefName,mergeable,reviewDecision"]);
-  const currentMain = gh(["api", `repos/${repo}/commits/main`]).sha;
-  const baseComparison = gh(["api", `repos/${repo}/compare/${currentMain}...${expectedHead}`]);
+  const pr = request(["pr", "view", String(number), "--repo", repo, "--json", "state,isDraft,headRefOid,baseRefOid,baseRefName,mergeable,reviewDecision"]);
+  const currentMain = request(["api", `repos/${repo}/commits/main`]).sha;
+  const baseComparison = request(["api", `repos/${repo}/compare/${currentMain}...${expectedHead}`]);
   const queryFor = (field, fields) => `query($cursor:String){repository(owner:"maksimzayats",name:"diwire"){pullRequest(number:${number}){${field}(first:100,after:$cursor){nodes{${fields}}pageInfo{hasNextPage endCursor}}}}}`;
-  const comments = pages(queryFor("comments", "id body author{login} updatedAt"), d => d.data.repository.pullRequest.comments);
-  const reviews = pages(queryFor("reviews", "id body state submittedAt author{login} commit{oid}"), d => d.data.repository.pullRequest.reviews);
-  const threads = pages(queryFor("reviewThreads", "id isResolved comments(first:100){nodes{id body author{login} updatedAt}pageInfo{hasNextPage endCursor}}"), d => d.data.repository.pullRequest.reviewThreads);
+  const comments = pages(queryFor("comments", "id body author{login} updatedAt"), d => d.data.repository.pullRequest.comments, request);
+  const reviews = pages(queryFor("reviews", "id body state submittedAt author{login} commit{oid}"), d => d.data.repository.pullRequest.reviews, request);
+  const threads = pages(queryFor("reviewThreads", "id isResolved comments(first:100){nodes{id body author{login} updatedAt}pageInfo{hasNextPage endCursor}}"), d => d.data.repository.pullRequest.reviewThreads, request);
   for (const t of threads) {
-    if (t.comments.pageInfo.hasNextPage) throw new Error("A review thread exceeds 100 comments; inspect it before merge");
-    t.comments = t.comments.nodes;
+    if (t.comments.pageInfo.hasNextPage) {
+      const query = `query($cursor:String){node(id:${JSON.stringify(t.id)}){...on PullRequestReviewThread{comments(first:100,after:$cursor){nodes{id body author{login} updatedAt}pageInfo{hasNextPage endCursor}}}}}`;
+      t.comments = pages(query, d => d.data.node.comments, request);
+    } else t.comments = t.comments.nodes;
   }
-  const checkPages = gh(["api", `repos/${repo}/commits/${expectedHead}/check-runs?per_page=100&filter=latest`, "--paginate", "--slurp"]);
+  const checkPages = request(["api", `repos/${repo}/commits/${expectedHead}/check-runs?per_page=100&filter=latest`, "--paginate", "--slurp"]);
   const checks = checkPages.flatMap(x => x.check_runs);
-  const statusPages = gh(["api", `repos/${repo}/commits/${expectedHead}/statuses?per_page=100`, "--paginate", "--slurp"]);
+  const statusPages = request(["api", `repos/${repo}/commits/${expectedHead}/statuses?per_page=100`, "--paginate", "--slurp"]);
   const byContext = new Map();
   for (const s of statusPages.flat()) if (!byContext.has(s.context)) byContext.set(s.context, s);
   const statuses = [...byContext.values()];
@@ -91,8 +98,26 @@ export function readSnapshot(repo, number, expectedHead, measurementUrl) {
   // observable lower bound for a push and starts a fresh wait after each head.
   const headPushedAt = [...checks.map(x => x.started_at), ...statuses.map(x => x.created_at)].filter(Boolean).sort().at(-1);
   const match = /^https:\/\/github.com\/maksimzayats\/diwire\/actions\/runs\/(\d+)$/.exec(measurementUrl ?? "");
-  const measurementRun = match ? gh(["run", "view", match[1], "--repo", repo, "--json", "headSha,status,conclusion,url"]) : null;
-  return {pr, currentMain, baseComparison, comments, reviews, threads, checks, statuses, headPushedAt, measurementRun};
+  const run = match ? gh(["api", `repos/${repo}/actions/runs/${match[1]}`]) : null;
+  const measurementRun = run ? {headSha: run.head_sha, status: run.status, conclusion: run.conclusion, workflowPath: run.path, event: run.event, url: run.html_url} : null;
+  let measurementDecision = null;
+  let measurementArtifactsVerified = false;
+  if (run?.conclusion === "success" && run.path === ".github/workflows/bb-performance.yaml" && run.head_sha === expectedHead) {
+    const temp = mkdtempSync(join(tmpdir(), "diwire-merge-proof-"));
+    try {
+      execFileSync("gh", ["run", "download", String(run.id), "--repo", repo, "--name", `bb-performance-${run.id}-${run.run_attempt}`, "--dir", temp], {encoding: "utf8", maxBuffer: 1024 * 1024});
+      const directory = join(temp, "comparison");
+      measurementDecision = JSON.parse(readFileSync(join(directory, "decision.json"), "utf8"));
+      const hashes = measurementDecision.evidence_sha256;
+      if (!hashes || Object.keys(hashes).length === 0) throw new Error("Performance artifact hash inventory is missing");
+      for (const [path, hash] of Object.entries(hashes)) {
+        const file = resolve(directory, path);
+        if (!file.startsWith(directory + sep) || createHash("sha256").update(readFileSync(file)).digest("hex") !== hash) throw new Error("Performance artifact hash mismatch: " + path);
+      }
+      measurementArtifactsVerified = true;
+    } finally { rmSync(temp, {recursive: true, force: true}); }
+  }
+  return {pr, currentMain, baseComparison, comments, reviews, threads, checks, statuses, headPushedAt, reviewNotBefore, measurementRun, measurementDecision, measurementArtifactsVerified};
 }
 export function main(argv) {
   const values = new Map();
@@ -102,7 +127,7 @@ export function main(argv) {
     values.set(argv[i], argv[i + 1]);
   }
   const evidence = JSON.parse(readFileSync(values.get("--evidence"), "utf8"));
-  const snapshot = readSnapshot(values.get("--repo"), Number(values.get("--pr")), values.get("--head"), evidence.measurement?.run_url);
+  const snapshot = readSnapshot(values.get("--repo"), Number(values.get("--pr")), values.get("--head"), evidence.measurement?.run_url, values.get("--review-not-before"));
   const verdict = evaluate(snapshot, evidence, values.get("--head"));
   const output = values.get("--output");
   if (!output) throw new Error("An output receipt path is required");
@@ -111,7 +136,7 @@ export function main(argv) {
   if (values.get("--merge")) {
     // Re-read after the inventory/evidence checks. The SHA fence below also
     // prevents a push racing the merge from changing the accepted head.
-    const final = readSnapshot(values.get("--repo"), Number(values.get("--pr")), values.get("--head"), evidence.measurement?.run_url);
+    const final = readSnapshot(values.get("--repo"), Number(values.get("--pr")), values.get("--head"), evidence.measurement?.run_url, values.get("--review-not-before"));
     const gate = evaluate(final, evidence, values.get("--head"));
     if (!gate.ready) throw new Error("Merge conditions changed: " + gate.errors.join("; "));
     execFileSync("gh", ["pr", "merge", values.get("--pr"), "--repo", values.get("--repo"), "--squash", "--match-head-commit", values.get("--head")], {stdio: "inherit"});
