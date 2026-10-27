@@ -68,7 +68,7 @@ runtime copy outside Git worktrees. Keep its config, state, job receipts and
 installation manifest under an ignored directory such as
 `/Users/mac/os/.local/diwire/bb/`. Never put credentials in config or prompts.
 
-Use `node .bb/automation/install-runtime.mjs --project PROJECT_ID --checkout /absolute/source --state-root /absolute/state --provider PROVIDER --model MODEL --reasoning LEVEL` from the clean reviewed worktree. Confirm the provider tuple in the live BB catalog first. Installation creates a BB script automation in the DIWire project, initially paused. The stored
+Use `node .bb/automation/install-runtime.mjs --project PROJECT_ID --checkout /absolute/source --state-root /absolute/state --provider PROVIDER --model MODEL --reasoning LEVEL` from the clean reviewed worktree. Confirm the provider tuple in the live BB catalog first. Installation creates a BB script automation in the DIWire project, initially paused. The checkout must be an existing root worktree of the same Git repository. Validation happens before an existing schedule is paused. This coordination checkout is used only for fetching; it may have a different HEAD from the reviewed installation worktree. New jobs start from fetched origin/main. The stored
 script invokes the pinned dispatcher with its absolute config/state paths and
 `tick`. Use cron `*/10 * * * *` with timezone `Europe/Minsk`. Script timeout is
 short; agent work runs in BB threads rather than inside the script process.

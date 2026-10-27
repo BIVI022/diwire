@@ -369,7 +369,7 @@ def test_runner_timeout_does_not_retry_and_keeps_command(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(compare, "snapshot", lambda: {})
+    monkeypatch.setattr(compare, "snapshot", dict)
     runner = _runner(tmp_path)
     calls = 0
 
@@ -409,7 +409,7 @@ def test_runner_rejects_changed_runtime_metadata(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(compare, "snapshot", lambda: {})
+    monkeypatch.setattr(compare, "snapshot", dict)
     runner = _runner(tmp_path)
     runner.runtime = {"dependencies": "original"}
 

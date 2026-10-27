@@ -20,6 +20,8 @@ async function run(responses) {
 test("a semantic rejection never reaches measurement or PR", async () => {
   const {value, calls} = await run([{candidates: [candidate]}, result("ready"), result("rejected"), result("rejected")]);
   assert.equal(value.outcome, "inconclusive");
+  assert.equal(value.attempts[0].fix.outcome, "rejected");
+  assert.equal(value.attempts[0].fix.evidence_path, "/evidence");
   assert.deepEqual(calls, ["Findings", "Implementation", "Behavior review", "Implementation"]);
 });
 test("an inconclusive measurement cannot open a PR", async () => {
@@ -69,4 +71,20 @@ test("a substituted measurement run cannot pass the independent audit", async ()
   const audit = {...result("accepted"), measurement_run_url: "https://github.com/maksimzayats/diwire/actions/runs/456"};
   const {value} = await run([{candidates: [candidate]}, result("ready"), result("accepted"), result("accepted"), audit]);
   assert.equal(value.outcome, "blocked");
+});
+
+test("a blocked behavior fix stops the next candidate", async () => {
+  const {value,calls}=await run([{candidates:[candidate,{...candidate,id:"two"}]},result("ready"),result("rejected"),result("blocked")]);
+  assert.equal(value.outcome,"blocked");
+  assert.equal(value.attempts[0].fix.outcome,"blocked");
+  assert.equal(calls.length,4);
+});
+test("a behavior fix with an invalid ready receipt blocks", async () => {
+  const {value}=await run([{candidates:[candidate]},result("ready"),result("rejected"),{...result("ready"),evidence_path:""}]);
+  assert.equal(value.outcome,"blocked");
+});
+test("a successful fix retains its evidence and first review", async () => {
+  const {value}=await run([{candidates:[candidate]},result("ready"),result("rejected"),result("ready"),result("accepted"),result("inconclusive")]);
+  assert.equal(value.attempts[0].fix.outcome,"ready");
+  assert.equal(value.attempts[0].first_semantic.outcome,"rejected");
 });

@@ -77,9 +77,11 @@ for (const candidate of findings.candidates) {
     "Report concrete counterexamples. Read-only source review; do not modify files.", {
     label: "Review behavior " + candidate.id, phase: "Behavior review", schema: resultSchema,
   });
+  const firstSemantic = semantic;
+  let fixed = null;
   if (semantic && semantic.outcome === "rejected") {
-    const fixed = await agent(scope + "\nVerify and fix these independent findings once: " + JSON.stringify(semantic) +
-      ". Preserve evidence. Update tests and candidate checkpoint. Reject if the mechanism cannot preserve behavior.", {
+    fixed = await agent(scope + "\nVerify and fix these independent findings once: " + JSON.stringify(semantic) +
+      ". Preserve evidence. Update tests and candidate checkpoint. On rejection verify exact owned rollback; return blocked if worktree state is uncertain.", {
       label: "Fix behavior " + candidate.id, phase: "Implementation", schema: resultSchema,
     });
     if (fixed && fixed.outcome === "ready" && receipt(fixed)) {
@@ -88,11 +90,15 @@ for (const candidate of findings.candidates) {
         ". Reproduce the previous findings and inspect the whole final diff. Return accepted only if all are resolved.", {
         label: "Recheck behavior " + candidate.id, phase: "Behavior review", schema: resultSchema,
       });
+    } else {
+      attempts.push({ candidate, implementation: implemented, semantic, fix: fixed });
+      if (!fixed || !["rejected", "inconclusive"].includes(fixed.outcome)) return { outcome: "blocked", attempts, findings, reason: "Behavior fix did not return a valid ready receipt or safe rejection." };
+      continue;
     }
   }
   if (semantic?.outcome === "accepted" && !receipt(semantic, implemented.head_sha)) return { outcome: "blocked", attempts, findings, reason: "Behavior review does not match candidate head." };
   if (!semantic || semantic.outcome !== "accepted") {
-    attempts.push({ candidate, implementation: implemented, semantic });
+    attempts.push({ candidate, implementation: implemented, semantic, first_semantic: firstSemantic, fix: fixed });
     if (!semantic || semantic.outcome === "blocked") return { outcome: "blocked", attempts, findings };
     continue;
   }
@@ -109,7 +115,7 @@ for (const candidate of findings.candidates) {
   });
   if (validation?.outcome === "accepted" && !receipt(validation, implemented.head_sha, true)) return { outcome: "blocked", attempts, findings, reason: "Validation does not match candidate head or run." };
   if (!validation || validation.outcome !== "accepted") {
-    attempts.push({ candidate, implementation: implemented, semantic, validation });
+    attempts.push({ candidate, implementation: implemented, semantic, first_semantic: firstSemantic, fix: fixed, validation });
     if (!validation || validation.outcome === "blocked") return { outcome: "blocked", attempts, findings };
     continue;
   }
@@ -120,7 +126,7 @@ for (const candidate of findings.candidates) {
     "only if both practical value and absence of unacceptable regression are established.", {
     label: "Audit measurements " + candidate.id, phase: "Measurement review", schema: resultSchema,
   });
-  attempts.push({ candidate, implementation: implemented, semantic, validation, measurement });
+  attempts.push({ candidate, implementation: implemented, semantic, first_semantic: firstSemantic, fix: fixed, validation, measurement });
   if (measurement?.outcome === "accepted" && (!receipt(measurement, validation.head_sha, true) || measurement.measurement_run_url !== validation.measurement_run_url)) return { outcome: "blocked", attempts, findings, reason: "Independent audit does not match measured head/run." };
   if (!measurement || measurement.outcome !== "accepted") {
     if (!measurement || measurement.outcome === "blocked") return { outcome: "blocked", attempts, findings };

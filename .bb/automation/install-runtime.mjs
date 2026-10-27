@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync, copyFileSync, readdirSync, existsSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync, copyFileSync, readdirSync, existsSync, realpathSync } from "node:fs";
 import { resolve, join } from "node:path";
 const args = process.argv.slice(2);
 const options = new Map();
@@ -13,6 +13,10 @@ const command = (bin, args) => execFileSync(bin, args, {encoding: "utf8", maxBuf
 const root = command("git", ["rev-parse", "--show-toplevel"]);
 if (command("git", ["status", "--porcelain"])) throw new Error("Install from a clean committed worktree");
 const revision = command("git", ["rev-parse", "HEAD"]);
+const checkout = resolve(options.get("--checkout"));
+const checkoutRoot = command("git", ["-C", checkout, "rev-parse", "--show-toplevel"]);
+const commonDirectory = path => realpathSync(resolve(path, command("git", ["-C", path, "rev-parse", "--git-common-dir"])));
+if (realpathSync(checkoutRoot) !== realpathSync(checkout) || commonDirectory(root) !== commonDirectory(checkout)) throw new Error("--checkout must be a root checkout of the reviewed Git repository");
 const name = "DIWire: daily perf PRs and weekly patch releases";
 const project = options.get("--project");
 const all = JSON.parse(command("bb", ["automation", "list", "--project", project, "--json"]));
@@ -20,7 +24,6 @@ const matches = all.filter(item => item.name === name);
 if (matches.length > 1) throw new Error("Duplicate pipeline schedules need reconciliation");
 if (matches.length) command("bb", ["automation", "pause", matches[0].id, "--project", project, "--json"]);
 const stateRoot = resolve(options.get("--state-root"));
-const checkout = resolve(options.get("--checkout"));
 const runtime = join(stateRoot, "runtime", revision);
 const prompts = join(runtime, "prompts");
 mkdirSync(prompts, {recursive: true});
