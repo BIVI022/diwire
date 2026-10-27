@@ -1,0 +1,26 @@
+{
+  "review_not_before": "UTC_ISO_TIME_FROM_DISPATCHER_CONTEXT",
+  "head_sha": "FULL_CURRENT_PR_HEAD_SHA",
+  "base_sha": "FULL_CURRENT_MAIN_SHA",
+  "independent_ai_review_path": null,
+  "semantic_review": "passed",
+  "measurement_review": "passed",
+  "lint": "passed",
+  "tests": "passed",
+  "api_signatures": "passed",
+  "fastapi_e2e": "passed",
+  "all_review_comments_read": "passed",
+  "all_findings_addressed": "passed",
+  "fastapi_e2e_head": "FULL_CURRENT_PR_HEAD_SHA",
+  "evidence_directory": "/absolute/path/to/actual/receipts",
+  "review_inventory_sha256": "HASH_FROM_LATEST_FULL_REVIEW_INSPECTION",
+  "reviewed_comment_ids": [],
+  "reviewed_review_ids": [],
+  "measurement": {
+    "outcome": "accepted",
+    "protocol_sha256": "ACTUAL_COMMITTED_PROTOCOL_SHA256",
+    "candidate_sha": "FULL_CURRENT_PR_HEAD_SHA",
+    "base_sha": "FULL_CURRENT_MAIN_SHA",
+    "run_url": "https://github.com/maksimzayats/diwire/actions/runs/ACTUAL_ID"
+  }
+}

@@ -1,0 +1,125 @@
+name: BB Linux performance comparison
+
+on:
+  workflow_dispatch:
+    inputs:
+      base_sha:
+        description: Immutable baseline commit (full 40-character SHA)
+        required: true
+        type: string
+      candidate_sha:
+        description: Immutable candidate SHA (empty means this workflow's exact github.sha)
+        required: false
+        default: ""
+        type: string
+      protocol:
+        description: Committed JSON protocol path in the candidate tree
+        required: true
+        type: string
+      quality_mode:
+        description: Run full quality gates and final FastAPI E2E on the exact candidate
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bb-performance-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  compare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    env:
+      BASE_SHA: ${{ inputs.base_sha }}
+      CANDIDATE_SHA: ${{ inputs.candidate_sha || github.sha }}
+      PROTOCOL: ${{ inputs.protocol }}
+      EVIDENCE: /tmp/bb-performance-${{ github.run_id }}-${{ github.run_attempt }}
+      UV_PYTHON: "3.14.7"
+    steps:
+      - name: Start partial evidence record
+        run: |
+          mkdir -p "$EVIDENCE"
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          Path(os.environ["EVIDENCE"], "dispatch.json").write_text(json.dumps({
+              key: os.environ[key] for key in ("BASE_SHA", "CANDIDATE_SHA", "PROTOCOL")
+          }, indent=2) + "\n")
+          PY
+
+      - name: Check immutable commit inputs
+        shell: bash
+        run: |
+          [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]]
+
+      - name: Checkout exact candidate and history
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.candidate_sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install established uv action
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.12.5"
+          enable-cache: false
+
+      - name: Install and verify pinned Python and locked dependencies
+        run: |
+          uv python install 3.14.7
+          uv sync --locked --python 3.14.7 --group dev --group docs
+          uv run --locked python -c 'import platform; assert platform.python_version() == "3.14.7"; assert platform.system() == "Linux"'
+
+      - name: Measure once and retain decision exit code
+        id: measurement
+        shell: bash
+        run: |
+          set +e
+          uv run --locked python -m tools.bb_perf_compare \
+            --base-sha "$BASE_SHA" --candidate-sha "$CANDIDATE_SHA" \
+            --protocol "$PROTOCOL" --output "$EVIDENCE/comparison"
+          result=$?
+          echo "exit_code=$result" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Check exact candidate formatting, lint and types
+        if: ${{ inputs.quality_mode && steps.measurement.outputs.exit_code == '0' }}
+        run: |
+          mkdir -p "$EVIDENCE"
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          git diff --exit-code
+          git diff --cached --exit-code
+          make lint 2>&1 | tee "$EVIDENCE/quality-lint.log"
+
+      - name: Test exact candidate with full coverage and API checks
+        if: ${{ inputs.quality_mode && steps.measurement.outputs.exit_code == '0' && !cancelled() }}
+        run: make test 2>&1 | tee "$EVIDENCE/quality-test.log"
+
+      # This is the final validation step, after measurements and all other quality checks.
+      - name: Final FastAPI E2E on the exact candidate
+        if: ${{ inputs.quality_mode && steps.measurement.outputs.exit_code == '0' && !cancelled() }}
+        run: make test-e2e-fastapi 2>&1 | tee "$EVIDENCE/quality-fastapi-e2e.log"
+
+      - name: Upload complete or partial evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bb-performance-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.EVIDENCE }}/
+          include-hidden-files: true
+          if-no-files-found: warn
+
+      - name: Apply measurement decision
+        if: ${{ always() && steps.measurement.outputs.exit_code != '' }}
+        env:
+          COMPARISON_EXIT: ${{ steps.measurement.outputs.exit_code }}
+        run: exit "$COMPARISON_EXIT"

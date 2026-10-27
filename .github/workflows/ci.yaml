@@ -78,6 +78,10 @@ jobs:
       - name: Lint with ruff
         run: uv run ruff check .
 
+      - name: Test BB workflow and merge gates
+        if: matrix.python-version == '3.14'
+        run: node --test .bb/tests/*.test.mjs
+
       - name: Type check with mypy
         if: matrix.python-version != '3.15t'
         run: uv run mypy .
