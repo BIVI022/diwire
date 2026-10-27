@@ -333,6 +333,10 @@ def test_runner_checks_inactive_subject_before_analysis(
         runner.run()
 
 
+@pytest.mark.skipif(
+    sys.version_info < (3, 11),
+    reason="Worker isolation needs Python -P (3.11+); official measurements use pinned 3.14.7",
+)
 def test_real_worker_imports_each_archived_subject_and_keeps_raw_data(tmp_path: Path) -> None:
     runner = _runner(tmp_path, distinct=True)
     test_source = """import diwire
@@ -380,6 +384,10 @@ def test_runner_timeout_does_not_retry_and_keeps_command(
     assert (tmp_path / "timeout-base.command.json").is_file()
 
 
+@pytest.mark.skipif(
+    sys.version_info < (3, 11),
+    reason="Worker isolation needs Python -P (3.11+); official measurements use pinned 3.14.7",
+)
 def test_real_worker_rejects_import_rebinding_during_collection(tmp_path: Path) -> None:
     runner = _runner(tmp_path)
     root = runner.subjects["base"]
