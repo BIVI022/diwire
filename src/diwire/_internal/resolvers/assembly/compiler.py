@@ -3815,6 +3815,9 @@ def _call_provider(*, callable_obj: Any, argument_parts: list[_ArgumentPart]) ->
     if not argument_parts:
         return callable_obj()
 
+    if len(argument_parts) == 1 and argument_parts[0].kind == "arg":
+        return callable_obj(argument_parts[0].value)
+
     positional_arguments: list[Any] = []
     keyword_arguments: dict[str, Any] = {}
     seen_keyword_names: set[str] = set()
