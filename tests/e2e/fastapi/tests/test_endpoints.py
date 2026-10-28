@@ -109,3 +109,59 @@ async def test_async_leaf_factory_handles_parallel_requests(
         assert payload["kind"] == "async-leaf"
         tokens.append(str(UUID(payload["token"])))
     assert len(set(tokens)) == 24
+
+
+@pytest.mark.asyncio
+async def test_cached_async_factory_is_scoped_and_resource_cleanup_finishes(
+    http_client: httpx.AsyncClient,
+) -> None:
+    before_response = await http_client.get("/services/cached-async-counts")
+    assert before_response.status_code == 200
+    before = before_response.json()
+    tokens: list[str] = []
+    resources: list[str] = []
+    for _ in range(2):
+        response = await http_client.get("/services/cached-async-leaf")
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["same"] is True
+        tokens.append(str(UUID(payload["token"])))
+        resources.append(str(UUID(payload["resource"])))
+    assert len(set(tokens)) == len(set(resources)) == 2
+    after_response = await http_client.get("/services/cached-async-counts")
+    assert after_response.status_code == 200
+    after = after_response.json()
+    assert {key: after[key] - before[key] for key in before} == {
+        "created": 2,
+        "opened": 2,
+        "closed": 2,
+    }
+
+
+@pytest.mark.asyncio
+async def test_cached_async_factory_isolated_for_parallel_requests(
+    http_client: httpx.AsyncClient,
+) -> None:
+    before_response = await http_client.get("/services/cached-async-counts")
+    assert before_response.status_code == 200
+    before = before_response.json()
+    responses = await asyncio.gather(
+        *(http_client.get("/services/cached-async-leaf") for _ in range(24)),
+    )
+    tokens: list[str] = []
+    resources: list[str] = []
+    for response in responses:
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["same"] is True
+        tokens.append(str(UUID(payload["token"])))
+        resources.append(str(UUID(payload["resource"])))
+    assert len(set(tokens)) == len(set(resources)) == 24
+    after_response = await http_client.get("/services/cached-async-counts")
+    assert after_response.status_code == 200
+    after = after_response.json()
+    assert {key: after[key] - before[key] for key in before} == {
+        "created": 24,
+        "opened": 24,
+        "closed": 24,
+    }

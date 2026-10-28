@@ -3300,6 +3300,8 @@ async def _build_local_value_async(
         and not workflow.dependencies
         and not workflow.provider_is_inject_wrapper
     ):
+        if workflow.provider_attribute == "factory" and workflow.is_provider_async:
+            return await provider()
         return await _build_local_value_async_no_arguments(
             resolver=resolver,
             workflow=workflow,

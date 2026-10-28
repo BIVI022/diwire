@@ -7,11 +7,16 @@ from diwire.integrations.fastapi import RequestContextMiddleware, add_request_co
 from tests.e2e.fastapi.setup.config import FastAPIE2ESettings
 from tests.e2e.fastapi.setup.services import (
     AsyncLeafService,
+    CachedAsyncResource,
+    CachedAsyncService,
     CMService,
     RequestBasedService,
     RequestWithCustomStateService,
     WebSocketBasedService,
+    cached_async_counts,
     provide_async_leaf_service,
+    provide_cached_async_resource,
+    provide_cached_async_service,
 )
 
 app = FastAPI()
@@ -64,6 +69,21 @@ async def async_leaf_service(service: Injected[AsyncLeafService]) -> dict[str, s
     return {"kind": "async-leaf", "token": service.token}
 
 
+@app.get("/services/cached-async-leaf")
+@resolver_context.inject(scope=Scope.REQUEST)
+async def cached_async_leaf_service(
+    first: Injected[CachedAsyncService],
+    second: Injected[CachedAsyncService],
+    resource: Injected[CachedAsyncResource],
+) -> dict[str, str | bool]:
+    return {"token": first.token, "same": first is second, "resource": resource.token}
+
+
+@app.get("/services/cached-async-counts")
+async def cached_async_state() -> dict[str, int]:
+    return dict(cached_async_counts)
+
+
 def main() -> None:
     container = Container()
     add_request_context(container)
@@ -73,6 +93,16 @@ def main() -> None:
         scope=Scope.REQUEST,
     )
     container.add_context_manager(CMService, scope=Scope.REQUEST)
+    container.add_factory(
+        provide_cached_async_service,
+        lifetime=Lifetime.SCOPED,
+        scope=Scope.REQUEST,
+    )
+    container.add_generator(
+        provide_cached_async_resource,
+        lifetime=Lifetime.SCOPED,
+        scope=Scope.REQUEST,
+    )
 
     settings = container.resolve(FastAPIE2ESettings)
     uvicorn.run(app, host=settings.host, port=settings.port)

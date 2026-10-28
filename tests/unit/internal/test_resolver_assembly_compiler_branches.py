@@ -4169,22 +4169,37 @@ async def test_build_local_value_async_argumented_branches() -> None:
 
 
 @pytest.mark.asyncio
-async def test_build_local_value_async_no_arguments_sync_factory_branch() -> None:
+@pytest.mark.parametrize("is_provider_async", [False, True])
+async def test_build_local_value_async_no_arguments_defers_and_awaits_provider(
+    *, is_provider_async: bool
+) -> None:
+    events: list[str] = []
+
+    def sync_provider() -> int:
+        events.append("call")
+        return 123
+
+    async def async_provider() -> int:
+        events.append("start")
+        await asyncio.sleep(0)
+        events.append("awaited")
+        return 123
+
     workflow = _workflow_plan(
         slot=80,
         provider_attribute="factory",
-        is_provider_async=False,
+        is_provider_async=is_provider_async,
         is_cached=False,
     )
-    assert (
-        await compiler_module._build_local_value_async_no_arguments(
-            resolver=SimpleNamespace(_cleanup_enabled=False),
-            workflow=workflow,
-            provider_scope_resolver=SimpleNamespace(_cleanup_callbacks=[]),
-            provider=lambda: 123,
-        )
-        == 123
+    pending = compiler_module._build_local_value_async_no_arguments(
+        resolver=SimpleNamespace(_cleanup_enabled=False),
+        workflow=workflow,
+        provider_scope_resolver=SimpleNamespace(_cleanup_callbacks=[]),
+        provider=async_provider if is_provider_async else sync_provider,
     )
+    assert events == []
+    assert await pending == 123
+    assert events == (["start", "awaited"] if is_provider_async else ["call"])
 
 
 def test_build_argument_parts_fallback_and_empty_branches() -> None:

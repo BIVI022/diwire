@@ -1,4 +1,5 @@
 import asyncio
+from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 from types import TracebackType
 from uuid import uuid4
@@ -62,3 +63,30 @@ class AsyncLeafService:
 async def provide_async_leaf_service() -> AsyncLeafService:
     await asyncio.sleep(0)
     return AsyncLeafService(token=str(uuid4()))
+
+
+@dataclass
+class CachedAsyncService:
+    token: str
+
+
+@dataclass
+class CachedAsyncResource:
+    token: str
+
+
+cached_async_counts = {"created": 0, "opened": 0, "closed": 0}
+
+
+async def provide_cached_async_service() -> CachedAsyncService:
+    cached_async_counts["created"] += 1
+    await asyncio.sleep(0)
+    return CachedAsyncService(token=str(uuid4()))
+
+
+async def provide_cached_async_resource() -> AsyncGenerator[CachedAsyncResource, None]:
+    cached_async_counts["opened"] += 1
+    try:
+        yield CachedAsyncResource(token=str(uuid4()))
+    finally:
+        cached_async_counts["closed"] += 1
