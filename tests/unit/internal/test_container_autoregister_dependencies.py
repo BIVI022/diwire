@@ -8,7 +8,6 @@ from abc import ABC, abstractmethod
 from types import ModuleType
 from typing import Annotated, Any, Generic, NamedTuple, TypeVar, cast
 
-import msgspec
 import pytest
 
 from diwire import (
@@ -716,6 +715,10 @@ def test_concrete_registration_autoregisters_namedtuple_class_dependencies() -> 
 
 
 def test_concrete_registration_autoregisters_msgspec_struct_dependencies() -> None:
+    pytest.importorskip("msgspec")
+
+    import msgspec
+
     class MsgspecRoot(msgspec.Struct):
         dependency: MsgspecFrameworkDependency
 
