@@ -18,23 +18,23 @@ async function run(responses) {
   return {value, calls};
 }
 test("a semantic rejection never reaches measurement or PR", async () => {
-  const {value, calls} = await run([{candidates: [candidate]}, result("ready"), result("rejected"), result("rejected")]);
-  assert.equal(value.outcome, "inconclusive");
+  const {value, calls} = await run([{candidates: [candidate]}, result("ready"), result("rejected"), result("rejected"), result("blocked")]);
+  assert.equal(value.outcome, "blocked");
   assert.equal(value.attempts[0].fix.outcome, "rejected");
   assert.equal(value.attempts[0].fix.evidence_path, "/evidence");
-  assert.deepEqual(calls, ["Findings", "Implementation", "Behavior review", "Implementation"]);
+  assert.deepEqual(calls, ["Findings", "Implementation", "Behavior review", "Implementation", "Example"]);
 });
 test("an inconclusive measurement cannot open a PR", async () => {
-  const {value, calls} = await run([{candidates: [candidate]}, result("ready"), result("accepted"), result("inconclusive")]);
-  assert.equal(value.outcome, "inconclusive");
+  const {value, calls} = await run([{candidates: [candidate]}, result("ready"), result("accepted"), result("inconclusive"), result("blocked")]);
+  assert.equal(value.outcome, "blocked");
   assert.ok(!calls.includes("Pull request"));
 });
 test("an independent audit can stop a nominal measurement win", async () => {
-  const {value, calls} = await run([{candidates: [candidate]}, result("ready"), result("accepted"), result("accepted"), result("rejected")]);
-  assert.equal(value.outcome, "inconclusive");
+  const {value, calls} = await run([{candidates: [candidate]}, result("ready"), result("accepted"), result("accepted"), result("rejected"), result("blocked")]);
+  assert.equal(value.outcome, "blocked");
   assert.ok(!calls.includes("Pull request"));
 });
-test("only a full accepted chain opens a PR and defers merge", async () => {
+test("a full accepted chain returns a PR checkpoint for root delivery", async () => {
   const pr = {...result("pr_open"), pr: 123};
   const {value, calls} = await run([{candidates: [candidate]}, result("ready"), result("accepted"), result("accepted"), result("accepted"), pr]);
   assert.equal(value.outcome, "waiting_review");
@@ -84,7 +84,47 @@ test("a behavior fix with an invalid ready receipt blocks", async () => {
   assert.equal(value.outcome,"blocked");
 });
 test("a successful fix retains its evidence and first review", async () => {
-  const {value}=await run([{candidates:[candidate]},result("ready"),result("rejected"),result("ready"),result("accepted"),result("inconclusive")]);
+  const {value}=await run([{candidates:[candidate]},result("ready"),result("rejected"),result("ready"),result("accepted"),result("inconclusive"),result("blocked")]);
   assert.equal(value.attempts[0].fix.outcome,"ready");
   assert.equal(value.attempts[0].first_semantic.outcome,"rejected");
+});
+
+const exampleResult = outcome => ({...result(outcome), change_kind: "non_runtime", measurement_run_url: ""});
+test("empty discovery continues through a useful example PR", async () => {
+  const pr = {...exampleResult("pr_open"), pr: 124};
+  const {value, calls} = await run([{candidates: []}, exampleResult("ready"), exampleResult("accepted"), exampleResult("accepted"), pr]);
+  assert.equal(value.outcome, "waiting_review");
+  assert.equal(value.change_kind, "non_runtime");
+  assert.match(value.next_action, /through merge and post-merge CI/);
+  assert.deepEqual(calls, ["Findings", "Example", "Behavior review", "Validation", "Pull request"]);
+});
+test("failed measurements stay recorded while a distinct example delivers", async () => {
+  const {value} = await run([{candidates: [candidate]}, result("ready"), result("accepted"), result("inconclusive"),
+    exampleResult("ready"), exampleResult("accepted"), exampleResult("accepted"), {...exampleResult("pr_open"), pr: 124}]);
+  assert.equal(value.attempts[0].validation.outcome, "inconclusive");
+  assert.equal(value.outcome, "waiting_review");
+});
+for (const [name, mutate] of [
+  ["missing scope declaration", r => {delete r.change_kind;}],
+  ["false measurement claim", r => {r.measurement_run_url = result("ready").measurement_run_url;}],
+  ["missing evidence", r => {r.evidence_path = "";}],
+]) test(`${name} cannot start example review`, async () => {
+  const preparation = exampleResult("ready"); mutate(preparation);
+  const {value,calls} = await run([{candidates: []}, preparation]);
+  assert.equal(value.outcome,"blocked");
+  assert.deepEqual(calls,["Findings","Example"]);
+});
+test("example review must bind the exact prepared head", async () => {
+  const {value} = await run([{candidates: []}, exampleResult("ready"), {...exampleResult("accepted"),head_sha:"b".repeat(40)}]);
+  assert.equal(value.outcome,"blocked");
+});
+test("example validation failure cannot open a PR", async () => {
+  const {value,calls} = await run([{candidates: []}, exampleResult("ready"), exampleResult("accepted"), exampleResult("rejected")]);
+  assert.equal(value.outcome,"blocked");
+  assert.ok(!calls.includes("Pull request"));
+});
+test("example PR cannot substitute a different head", async () => {
+  const {value} = await run([{candidates: []}, exampleResult("ready"), exampleResult("accepted"), exampleResult("accepted"),
+    {...exampleResult("pr_open"),pr:124,head_sha:"b".repeat(40)}]);
+  assert.equal(value.outcome,"blocked");
 });

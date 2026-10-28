@@ -135,3 +135,56 @@ test("a reply-only review does not replace a rate-limited full review",()=>{
   evidence.review_inventory_sha256=reviewInventoryHash(snapshot);
   assert.equal(evaluate(snapshot,evidence,head,now).ready,false);
 });
+
+function exampleFixture() {
+  const f = fixture();
+  f.snapshot.baseComparison.files = [
+    {filename: "examples/ex_04_scopes_and_cleanup/05_unit_of_work.py"},
+    {filename: "docs/howto/patterns/unit-of-work.rst"},
+    {filename: ".bb/workflows/daily-perf.js"},
+    {filename: "tools/bb_perf_dispatch.py"},
+  ];
+  Object.assign(f.evidence, {change_kind: "non_runtime", example_validation: "passed", measurement_review: "not_applicable"});
+  delete f.evidence.measurement;
+  delete f.snapshot.measurementRun;
+  delete f.snapshot.measurementDecision;
+  delete f.snapshot.measurementArtifactsVerified;
+  return f;
+}
+test("verified non-runtime example uses runnable evidence instead of speed claims", () => {
+  const f = exampleFixture();
+  assert.deepEqual(evaluate(f.snapshot, f.evidence, head, now).errors, []);
+});
+for (const path of ["src/diwire/__init__.py", "uv.lock", "pyproject.toml", ".github/workflows/ci.yaml", "tools/unknown.py"]) {
+  test(`non-runtime declaration cannot hide ${path}`, () => {
+    const f = exampleFixture();
+    f.snapshot.baseComparison.files.push({filename: path});
+    assert.equal(evaluate(f.snapshot, f.evidence, head, now).ready, false);
+  });
+}
+test("renaming runtime source into an example still requires measurement", () => {
+  const f = exampleFixture();
+  f.snapshot.baseComparison.files[0].previous_filename = "src/diwire/__init__.py";
+  assert.equal(evaluate(f.snapshot, f.evidence, head, now).ready, false);
+});
+for (const files of [undefined, [], Array.from({length:300}, () => ({filename: "docs/guide.rst"}))]) {
+  test(`missing or truncated non-runtime scope cannot waive measurements (${files?.length})`, () => {
+    const f = exampleFixture(); f.snapshot.baseComparison.files = files;
+    assert.equal(evaluate(f.snapshot, f.evidence, head, now).ready, false);
+  });
+}
+test("non-runtime declaration still needs runnable example validation", () => {
+  const f = exampleFixture(); delete f.evidence.example_validation;
+  assert.equal(evaluate(f.snapshot, f.evidence, head, now).ready, false);
+});
+test("non-runtime declaration keeps review, CI, base and E2E gates", () => {
+  for (const mutate of [
+    f => {f.snapshot.checks.pop();},
+    f => {f.evidence.fastapi_e2e_head = base;},
+    f => {f.snapshot.threads[0].isResolved = false;},
+    f => {f.snapshot.currentMain = "c".repeat(40);},
+  ]) {
+    const f = exampleFixture(); mutate(f);
+    assert.equal(evaluate(f.snapshot, f.evidence, head, now).ready, false);
+  }
+});

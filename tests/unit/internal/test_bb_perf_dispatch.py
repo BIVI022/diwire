@@ -200,9 +200,11 @@ class Fake:
         )
         self.threads[-1]["status"] = "idle"
 
-    def complete(self) -> None:
+    def complete(self, *, non_runtime: bool = False) -> None:
         evidence = self.workspace / "validation.json"
         evidence.write_text("{}")
+        if non_runtime:
+            evidence = _non_runtime_evidence(self)
         job = self.job()
         argv = [
             "--config",
@@ -234,6 +236,10 @@ class Fake:
             "merge_sha=merged-sha",
         ):
             argv.extend(["--receipt", receipt])
+        if non_runtime:
+            argv.extend(["--receipt", "change_kind=non_runtime"])
+            index = argv.index("--measurement-run-url")
+            del argv[index : index + 2]
         self.controller.record(parser().parse_args(argv))
 
 
@@ -348,14 +354,17 @@ def test_active_thread_prevents_followup_and_next_day_overlap(fake: Fake) -> Non
     assert fake.jobs()["daily:2026-10-28"]["status"] == "queued"
 
 
-def test_worker_terminal_clears_stale_claim_with_honest_reason(fake: Fake) -> None:
+def test_interrupted_pre_pr_owner_recovers_in_same_worktree(fake: Fake) -> None:
     fake.controller.tick()
     fake.threads[-1]["status"] = "error"
     fake.now += timedelta(days=1)
     fake.controller.tick()
     assert len(fake.spawns()) == 2
-    assert fake.job()["status"] == "inconclusive"
-    assert "without a terminal receipt" in fake.job()["reason"]
+    assert fake.job()["status"] == "running"
+    assert fake.job()["recoveries"] == 1
+    assert "--environment" in fake.spawns()[-1]
+    assert "same worktree" in str(fake.job()["receipts"][-2]["reason"])
+    assert fake.jobs()["daily:2026-10-28"]["status"] == "queued"
 
 
 def test_blocked_release_does_not_block_unrelated_daily(fake: Fake) -> None:
@@ -721,6 +730,11 @@ def test_queued_monday_release_starts_on_tuesday_before_daily_schedule(fake: Fak
     fake.now = datetime(2026, 11, 2, 9, tzinfo=timezone.utc)
     fake.controller.tick()
     assert fake.jobs()["release:2026-W45"]["status"] == "queued"
+    with fake.controller.store.locked():
+        daily = fake.controller.store.state["jobs"]["daily:2026-11-02"]
+        daily["status"] = "blocked"
+        fake.controller.receipt(daily, "Concrete external blocker prevents both delivery paths")
+        fake.controller.store.save()
     fake.threads[-1]["status"] = "idle"
     fake.now = datetime(2026, 11, 3, 5, tzinfo=timezone.utc)
     fake.controller.tick()
@@ -872,3 +886,219 @@ def test_early_changed_head_followup_retains_one_due_review_recheck(fake: Fake) 
     fake.now += timedelta(minutes=11)
     fake.controller.tick()
     assert len(fake.spawns()) == 3
+
+
+def _reopen_record(
+    fake: Fake, *, status: str = "running", reason: str = "Owner requested resume"
+) -> None:
+    job = fake.job()
+    fake.controller.record(
+        parser().parse_args(
+            [
+                "--config",
+                str(fake.config),
+                "--state-dir",
+                str(fake.state),
+                "record",
+                "--job",
+                job["id"],
+                "--thread-id",
+                job["thread_id"],
+                "--environment-id",
+                job["environment_id"],
+                "--workspace",
+                job["workspace"],
+                "--status",
+                status,
+                "--reason",
+                reason,
+                "--reopen",
+            ]
+        )
+    )
+
+
+@pytest.mark.parametrize("status", ["blocked", "inconclusive", "rejected"])
+def test_owner_can_reopen_failed_job_without_losing_receipts(fake: Fake, status: str) -> None:
+    fake.controller.tick()
+    fake.record(status, reason="Earlier attempt did not qualify")
+    previous = list(fake.job()["receipts"])
+    _reopen_record(fake)
+    assert fake.job()["status"] == "running"
+    assert fake.job()["receipts"][:-1] == previous
+    assert fake.job()["thread_id"] == fake.threads[0]["id"]
+
+
+@pytest.mark.parametrize(
+    ("job_status", "requested", "reason"),
+    [
+        ("complete", "running", "Owner request"),
+        ("running", "running", "Owner request"),
+        ("inconclusive", "complete", "Owner request"),
+        ("inconclusive", "running", ""),
+    ],
+)
+def test_reopen_requires_failed_job_running_status_and_reason(
+    fake: Fake, job_status: str, requested: str, reason: str
+) -> None:
+    fake.controller.tick()
+    job_id = fake.job()["id"]
+    with fake.controller.store.locked():
+        fake.controller.store.state["jobs"][job_id]["status"] = job_status
+        fake.controller.store.save()
+    with pytest.raises(DispatchError, match="Reopen requires"):
+        _reopen_record(fake, status=requested, reason=reason)
+
+
+@pytest.mark.parametrize("other_status", ["running", "waiting_ci", "waiting_review"])
+def test_reopen_refuses_another_job_writer(fake: Fake, other_status: str) -> None:
+    fake.controller.tick()
+    fake.record("inconclusive", reason="Earlier attempt")
+    with fake.controller.store.locked():
+        other = fake.controller.new_job("daily:2026-10-28", "daily")
+        other["status"] = other_status
+        fake.controller.store.state["jobs"][other["id"]] = other
+        fake.controller.store.save()
+    with pytest.raises(DispatchError, match="Another job owns"):
+        _reopen_record(fake)
+
+
+def _non_runtime_evidence(fake: Fake) -> Path:
+    path = fake.workspace / "example-validation.json"
+    path.write_text(
+        json.dumps(
+            {
+                "change_kind": "non_runtime",
+                "head_sha": fake.head,
+                "base_sha": "accepted-base",
+                "example_validation": "passed",
+                "measurement_review": "not_applicable",
+            }
+        )
+    )
+    return path
+
+
+def _comparison_runner(fake: Fake, files: list[dict[str, str]]) -> None:
+    def run(argv: list[str]) -> str:
+        if "/compare/" in argv[-1]:
+            return json.dumps({"files": files})
+        return fake.run(argv)
+
+    fake.controller.run = run
+
+
+def test_non_runtime_completion_verifies_the_remote_diff(fake: Fake) -> None:
+    fake.waiting()
+    path = _non_runtime_evidence(fake)
+    _comparison_runner(
+        fake,
+        [
+            {"filename": "examples/ex_04_scopes_and_cleanup/05_unit_of_work.py"},
+            {"filename": "tools/bb_perf_dispatch.py"},
+            {"filename": "docs/howto/patterns/unit-of-work.rst"},
+            {"filename": "README.md"},
+            {"filename": ".bb/workflows/daily-perf.js"},
+        ],
+    )
+    fake.controller.validate_non_runtime(
+        fake.job(), {"accepted_base_sha": "accepted-base"}, str(path)
+    )
+
+
+@pytest.mark.parametrize(
+    "field", ["change_kind", "head_sha", "base_sha", "example_validation", "measurement_review"]
+)
+def test_non_runtime_requires_exact_validated_example_evidence(fake: Fake, field: str) -> None:
+    fake.waiting()
+    path = _non_runtime_evidence(fake)
+    evidence = json.loads(path.read_text())
+    evidence[field] = "invalid"
+    path.write_text(json.dumps(evidence))
+    with pytest.raises(DispatchError, match="exact-head example validation"):
+        fake.controller.validate_non_runtime(
+            fake.job(), {"accepted_base_sha": "accepted-base"}, str(path)
+        )
+
+
+@pytest.mark.parametrize(
+    "files",
+    [
+        [],
+        [{"filename": "docs/guide.rst"}] * 300,
+        [{"filename": "src/diwire/__init__.py"}],
+        [{"filename": "uv.lock"}],
+        [{"filename": "pyproject.toml"}],
+        [{"filename": ".github/workflows/ci.yaml"}],
+        [{"filename": "tools/unknown.py"}],
+        [{"filename": "docs/guide.rst", "previous_filename": "src/diwire/__init__.py"}],
+    ],
+)
+def test_non_runtime_rejects_incomplete_or_ineligible_diffs(
+    fake: Fake, files: list[dict[str, str]]
+) -> None:
+    fake.waiting()
+    path = _non_runtime_evidence(fake)
+    _comparison_runner(fake, files)
+    with pytest.raises(DispatchError, match="Non-runtime"):
+        fake.controller.validate_non_runtime(
+            fake.job(), {"accepted_base_sha": "accepted-base"}, str(path)
+        )
+
+
+def test_complete_accepts_verified_example_without_a_measurement_run(fake: Fake) -> None:
+    fake.waiting()
+    fake.merged = True
+    _comparison_runner(fake, [{"filename": "examples/transaction.py"}])
+    fake.complete(non_runtime=True)
+    assert fake.job()["status"] == "complete"
+
+
+def test_example_completion_still_requires_matching_merged_tree(fake: Fake) -> None:
+    fake.waiting()
+    fake.merged = True
+    _comparison_runner(fake, [{"filename": "src/diwire/__init__.py"}])
+    with pytest.raises(DispatchError, match="ineligible path"):
+        fake.complete(non_runtime=True)
+    assert fake.job()["status"] != "complete"
+
+
+def test_pre_pr_interruption_recovery_is_bounded_and_keeps_workflow_receipt(fake: Fake) -> None:
+    fake.controller.tick()
+    fake.record("running", receipt="workflow_run_id=wfr_saved")
+    for attempt in range(2):
+        fake.threads[-1]["status"] = "idle"
+        fake.controller.tick()
+        assert fake.job()["status"] == "running"
+        assert fake.job()["recoveries"] == attempt + 1
+        assert "--environment" in fake.spawns()[-1]
+    fake.threads[-1]["status"] = "error"
+    fake.controller.tick()
+    assert fake.job()["status"] == "blocked"
+    assert len(fake.spawns()) == 3
+    assert any(
+        receipt.get("receipts") == ["workflow_run_id=wfr_saved"]
+        for receipt in fake.job()["receipts"]
+    )
+
+
+@pytest.mark.parametrize("pending_intent", [True, False])
+def test_reopen_respects_provisioning_intents_and_live_terminal_roots(
+    fake: Fake, *, pending_intent: bool
+) -> None:
+    fake.controller.tick()
+    fake.record("inconclusive", reason="Earlier attempt")
+    with fake.controller.store.locked():
+        other = fake.controller.new_job("daily:2026-10-28", "daily")
+        if pending_intent:
+            other["intent"] = "DIWire daily:2026-10-28 / 0"
+        else:
+            other["status"] = "blocked"
+            other["thread_id"] = "thr_other"
+            fake.threads.append(
+                {"id": "thr_other", "status": "active", "projectId": "proj_hypmgayr8j"}
+            )
+        fake.controller.store.state["jobs"][other["id"]] = other
+        fake.controller.store.save()
+    with pytest.raises(DispatchError, match="Another job owns"):
+        _reopen_record(fake)

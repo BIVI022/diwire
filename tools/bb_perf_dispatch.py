@@ -66,6 +66,7 @@ DONE: Final = frozenset({"idle", "error"})
 SCHEMA: Final = 1
 MIN_REVIEW_WAIT: Final = 600
 MAX_RECOVERIES: Final = 2
+COMPARE_FILE_LIMIT: Final = 300
 POSTMERGE_WORKFLOWS: Final = frozenset({".github/workflows/ci.yaml", ".github/workflows/docs.yaml"})
 Runner = Callable[[list[str]], str]
 Clock = Callable[[], datetime]
@@ -542,10 +543,20 @@ class Controller:
             self.receipt(job, "Worker ended with an open PR; retain CI watch")
             self.store.save()
         elif job["status"] == "running":
-            job["status"] = "inconclusive"
-            self.receipt(job, "Worker ended without a terminal receipt", thread_id=job["thread_id"])
+            self.recover_interrupted(job)
+        return job["status"] in WAITING or job["status"] == "running"
+
+    def recover_interrupted(self, job: Job) -> None:
+        """Resume a pre-PR interruption in the same worktree, within the budget."""
+        if not job["environment_id"] or job["recoveries"] >= self.config.max_recovery_attempts:
+            job["status"] = "blocked"
+            self.receipt(job, "Pre-PR interruption cannot recover; inspect saved workflow evidence")
             self.store.save()
-        return job["status"] in WAITING
+            return
+        job["recoveries"] += 1
+        self.wake(
+            job, "Pre-PR owner interrupted; resume saved workflow or example in same worktree"
+        )
 
     def pages(self, endpoint: str) -> list[object]:
         """Read all REST pages, without dropping review bodies or comments."""
@@ -916,7 +927,9 @@ class Controller:
                 job["workspace"],
             ):
                 fail("Stale thread or environment receipt")
-            if job["status"] in TERMINAL:
+            if args.reopen:
+                self.validate_reopen(job, args)
+            elif job["status"] in TERMINAL:
                 fail("Terminal job cannot change")
             if args.status in TERMINAL and not args.reason:
                 fail("Terminal status requires a reason")
@@ -941,6 +954,25 @@ class Controller:
                 job["wait_since"] = self.clock().timestamp()
             job["status"] = args.status
             self.store.save()
+
+    def validate_reopen(self, job: Job, args: argparse.Namespace) -> None:
+        """Keep owner-requested recovery separate from ordinary receipts."""
+        if (
+            job["status"] not in {"blocked", "rejected", "inconclusive"}
+            or args.status != "running"
+            or not args.reason
+        ):
+            fail("Reopen requires a failed job, running status and an owner reason")
+        if any(
+            other["id"] != job["id"]
+            and (
+                other["intent"]
+                or other["status"] in {"running", "waiting_review", "waiting_ci"}
+                or (other["thread_id"] and self.worker_live(other))
+            )
+            for other in self.store.state["jobs"].values()
+        ):
+            fail("Another job owns the writer")
 
     def release_complete(self, args: argparse.Namespace) -> None:
         """Verify PATCH publication, exact publish run and PyPI file hashes."""
@@ -1034,7 +1066,9 @@ class Controller:
             fail("Complete requires accepted head/base/tree and merge SHA receipts")
         root = f"repos/{self.config.repository}"
         pr = obj(self.json(["gh", "api", f"{root}/pulls/{job['pr']}"]))
-        if not (args.measurement_run_url or self.has_evidence(job)):
+        if receipts.get("change_kind") == "non_runtime":
+            self.validate_non_runtime(job, receipts, args.validation_evidence)
+        elif not (args.measurement_run_url or self.has_evidence(job)):
             fail("Complete requires measured Linux CI evidence")
         if (
             receipts["accepted_head_sha"] != job["head_sha"]
@@ -1053,6 +1087,40 @@ class Controller:
             or obj(head["tree"])["sha"] != receipts["accepted_tree_sha"]
         ):
             fail("Merged tree/base does not match the accepted measured head")
+
+    def validate_non_runtime(self, job: Job, receipts: dict[str, str], evidence_path: str) -> None:
+        """Verify the complete diff before waiving performance measurements."""
+        evidence = obj(json.loads(Path(evidence_path).read_text()))
+        if (
+            evidence.get("change_kind") != "non_runtime"
+            or evidence.get("head_sha") != job["head_sha"]
+            or evidence.get("base_sha") != receipts["accepted_base_sha"]
+            or evidence.get("example_validation") != "passed"
+            or evidence.get("measurement_review") != "not_applicable"
+        ):
+            fail("Non-runtime completion requires exact-head example validation evidence")
+        comparison = obj(
+            self.json(
+                [
+                    "gh",
+                    "api",
+                    (
+                        f"repos/{self.config.repository}/compare/"
+                        f"{receipts['accepted_base_sha']}...{job['head_sha']}"
+                    ),
+                ]
+            )
+        )
+        files = rows(comparison.get("files", []))
+        if not files or len(files) >= COMPARE_FILE_LIMIT:
+            fail("Non-runtime diff is empty or exceeds the complete comparison limit")
+        for file in files:
+            for path in (file["filename"], file.get("previous_filename", file["filename"])):
+                if not (
+                    str(path).startswith(("examples/", "docs/", "tests/", ".bb/"))
+                    or path in {"tools/bb_perf_dispatch.py", "README.md"}
+                ):
+                    fail(f"Non-runtime completion includes an ineligible path: {path}")
 
 
 def parser() -> argparse.ArgumentParser:
@@ -1074,6 +1142,7 @@ def parser() -> argparse.ArgumentParser:
         record.add_argument(f"--{name}", required=True)
     record.add_argument("--status", choices=sorted(STATUSES), required=True)
     record.add_argument("--pr", type=int)
+    record.add_argument("--reopen", action="store_true", help="Owner-requested failed-job resume")
     for name in ("head-sha", "validation-evidence", "measurement-run-url", "reason"):
         record.add_argument(f"--{name}", default="")
     record.add_argument("--receipt", action="append", default=[], help="Extra key=value evidence")

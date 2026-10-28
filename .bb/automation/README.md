@@ -17,8 +17,9 @@ worktrees. Weekly releases increase the patch version only.
 - `.bb-env-setup.sh`: frozen dev/docs setup for new BB worktrees.
 
 The visible daily thread owns the job record. Workflow workers return structured
-results. Opening a PR records `waiting_review`. A later new follow-up thread uses
-the same worktree to read reviews, fix findings, repeat validation and merge.
+results. Opening a PR records a `waiting_review` checkpoint. The same visible root continues
+to read reviews, fix findings, repeat validation and merge. Recovery follow-ups
+use the same worktree only after an interruption or external blocker.
 It checks the actual merge SHA and post-merge CI before completing the job.
 
 ## Schedule
@@ -48,11 +49,26 @@ limit and regression tolerance. Preserve all calibration, failed and successful
 samples at unique paths. The comparison result must identify the subject source
 that each child process actually imported.
 
-A PR needs useful public-workload improvement beyond noise, unchanged behavior
+A performance PR needs useful public-workload improvement beyond noise, unchanged behavior
 and API, independent behavior and measurement reviews, clean lint/types, full
 coverage, and the final FastAPI E2E check. After PR feedback changes source or
 base, evidence must be renewed for the resulting head. Merge needs completed AI
 review, green exact-head CI and no unresolved findings. Use match-head-commit.
+
+If performance candidates fail or discovery finds no supported idea, the daily
+job continues with a useful runnable example for a missing case. Keep the old
+attempts and start the example from fetched main. The non-runtime path requires
+example checks and independent review, all normal quality gates and exact-head
+remote CI. The merge helper and dispatcher verify every changed and renamed path
+before they waive performance measurements. Library, dependency, build or CI
+changes cannot use this path. Record `change_kind=non_runtime` throughout.
+
+Completion means a useful PR was merged and CI plus Docs passed on the actual
+merge SHA. A failed experiment or waiting receipt is not daily completion.
+A concrete external blocker needs evidence and a bounded recovery action. An
+explicit owner request can reopen a failed job through `record --reopen --status
+running --reason ...`, with the same saved root/environment and no other writer.
+All previous receipts remain in the record.
 
 A release uses the existing GitHub Release -> publish.yaml -> PyPI path. It
 checks both registries, useful unreleased changes, exact-SHA CI and known release

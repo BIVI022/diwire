@@ -17,6 +17,12 @@ const shaPattern = /^[0-9a-f]{40}$/;
 export function reviewInventoryHash(snapshot) {
   return createHash("sha256").update(JSON.stringify({comments: snapshot.comments, reviews: snapshot.reviews, threads: snapshot.threads})).digest("hex");
 }
+export function nonRuntimeScope(files) {
+  const eligible = path => typeof path === "string" &&
+    (/^(examples|docs|tests|\.bb)\//.test(path) || ["tools/bb_perf_dispatch.py", "README.md"].includes(path));
+  return Array.isArray(files) && files.length > 0 && files.length < 300 &&
+    files.every(file => eligible(file.filename) && (!file.previous_filename || eligible(file.previous_filename)));
+}
 export function evaluate(snapshot, evidence, expectedHead, now = Date.now()) {
   const errors = [];
   const pr = snapshot.pr;
@@ -45,17 +51,24 @@ export function evaluate(snapshot, evidence, expectedHead, now = Date.now()) {
   for (const r of snapshot.reviews) if (["APPROVED", "CHANGES_REQUESTED", "DISMISSED"].includes(r.state)) latestReviews.set(r.author?.login, r);
   if ([...latestReviews.values()].some(r => r.state === "CHANGES_REQUESTED")) errors.push("A reviewer still requests changes");
   if (evidence.head_sha !== expectedHead || evidence.base_sha !== snapshot.currentMain) errors.push("Evidence is stale for head or base");
-  for (const key of ["semantic_review", "measurement_review", "lint", "tests", "api_signatures", "fastapi_e2e", "all_review_comments_read", "all_findings_addressed"]) {
+  const nonRuntime = evidence.change_kind === "non_runtime";
+  for (const key of ["semantic_review", "lint", "tests", "api_signatures", "fastapi_e2e", "all_review_comments_read", "all_findings_addressed"]) {
     if (evidence[key] !== "passed") errors.push(`Evidence missing: ${key}`);
   }
-  if (evidence.measurement?.outcome !== "accepted" || evidence.measurement?.candidate_sha !== expectedHead || evidence.measurement?.base_sha !== snapshot.currentMain || !/^https:\/\/github.com\/maksimzayats\/diwire\/actions\/runs\/\d+$/.test(evidence.measurement?.run_url ?? "")) errors.push("Accepted exact-head Linux comparison receipt is missing");
+  if (nonRuntime) {
+    if (!nonRuntimeScope(snapshot.baseComparison?.files)) errors.push("Non-runtime diff contains ineligible paths or is incomplete");
+    if (evidence.example_validation !== "passed" || evidence.measurement_review !== "not_applicable") errors.push("Runnable example validation or non-runtime review is missing");
+  } else {
+    if (evidence.measurement_review !== "passed") errors.push("Evidence missing: measurement_review");
+    if (evidence.measurement?.outcome !== "accepted" || evidence.measurement?.candidate_sha !== expectedHead || evidence.measurement?.base_sha !== snapshot.currentMain || !/^https:\/\/github.com\/maksimzayats\/diwire\/actions\/runs\/\d+$/.test(evidence.measurement?.run_url ?? "")) errors.push("Accepted exact-head Linux comparison receipt is missing");
+    if (snapshot.measurementRun?.headSha !== expectedHead || snapshot.measurementRun?.status !== "completed" || snapshot.measurementRun?.conclusion !== "success") errors.push("Remote measurement run is not green for this exact head");
+    if (snapshot.measurementRun?.workflowPath !== ".github/workflows/bb-performance.yaml" || snapshot.measurementRun?.event !== "workflow_dispatch") errors.push("Measurement receipt is not the performance workflow");
+    const decision = snapshot.measurementDecision;
+    if (!snapshot.measurementArtifactsVerified || decision?.status !== "accepted" || decision?.identical_source !== false || decision?.base_sha !== snapshot.currentMain || decision?.candidate_sha !== expectedHead || !/^[0-9a-f]{64}$/.test(evidence.measurement?.protocol_sha256 ?? "") || decision?.protocol_sha256 !== evidence.measurement?.protocol_sha256) errors.push("Remote performance decision or artifact hashes are not accepted for these inputs");
+  }
   if (evidence.fastapi_e2e_head !== expectedHead || !evidence.evidence_directory) errors.push("Final exact-head E2E receipt is missing");
   if (!Array.isArray(evidence.reviewed_comment_ids) || !Array.isArray(evidence.reviewed_review_ids)) errors.push("Review-read inventory is missing");
-  if (snapshot.measurementRun?.headSha !== expectedHead || snapshot.measurementRun?.status !== "completed" || snapshot.measurementRun?.conclusion !== "success") errors.push("Remote measurement run is not green for this exact head");
   if (evidence.review_inventory_sha256 !== reviewInventoryHash(snapshot)) errors.push("Review content changed or its read receipt is missing");
-  if (snapshot.measurementRun?.workflowPath !== ".github/workflows/bb-performance.yaml" || snapshot.measurementRun?.event !== "workflow_dispatch") errors.push("Measurement receipt is not the performance workflow");
-  const decision = snapshot.measurementDecision;
-  if (!snapshot.measurementArtifactsVerified || decision?.status !== "accepted" || decision?.identical_source !== false || decision?.base_sha !== snapshot.currentMain || decision?.candidate_sha !== expectedHead || !/^[0-9a-f]{64}$/.test(evidence.measurement?.protocol_sha256 ?? "") || decision?.protocol_sha256 !== evidence.measurement?.protocol_sha256) errors.push("Remote performance decision or artifact hashes are not accepted for these inputs");
   const commentIds = new Set(evidence.reviewed_comment_ids ?? []);
   const reviewIds = new Set(evidence.reviewed_review_ids ?? []);
   for (const item of snapshot.comments) if (!commentIds.has(item.id)) errors.push(`Comment was not included in review receipt: ${item.id}`);
