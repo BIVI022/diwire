@@ -50,7 +50,7 @@ import subprocess
 import sys
 import tempfile
 import urllib.request
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
@@ -442,6 +442,7 @@ class Controller:
             state_dir=str(self.store.path),
             config_path=str(self.config_path),
             dispatcher_path=dispatcher,
+            merge_gate_path=str(Path(dispatcher).parent / "merge-gate.mjs"),
             record_command=shlex.join(prefix),
             snapshot_path=str(self.store.path / f"{job['id']}.snapshot.json"),
             authorized_commands=[
@@ -1066,7 +1067,7 @@ class Controller:
             fail("Complete requires accepted head/base/tree and merge SHA receipts")
         root = f"repos/{self.config.repository}"
         pr = obj(self.json(["gh", "api", f"{root}/pulls/{job['pr']}"]))
-        if receipts.get("change_kind") == "non_runtime":
+        if receipts.get("change_kind") in {"non_runtime", "automation_maintenance"}:
             self.validate_non_runtime(job, receipts, args.validation_evidence)
         elif not (args.measurement_run_url or self.has_evidence(job)):
             fail("Complete requires measured Linux CI evidence")
@@ -1091,8 +1092,10 @@ class Controller:
     def validate_non_runtime(self, job: Job, receipts: dict[str, str], evidence_path: str) -> None:
         """Verify the complete diff before waiving performance measurements."""
         evidence = obj(json.loads(Path(evidence_path).read_text()))
+        maintenance = receipts.get("change_kind") == "automation_maintenance"
         if (
-            evidence.get("change_kind") != "non_runtime"
+            evidence.get("change_kind")
+            != ("automation_maintenance" if maintenance else "non_runtime")
             or evidence.get("head_sha") != job["head_sha"]
             or evidence.get("base_sha") != receipts["accepted_base_sha"]
             or evidence.get("example_validation") != "passed"
@@ -1114,13 +1117,61 @@ class Controller:
         files = rows(comparison.get("files", []))
         if not files or len(files) >= COMPARE_FILE_LIMIT:
             fail("Non-runtime diff is empty or exceeds the complete comparison limit")
+        if maintenance:
+            self.validate_owner_maintenance(job, evidence, files)
         for file in files:
             for path in (file["filename"], file.get("previous_filename", file["filename"])):
                 if not (
-                    str(path).startswith(("examples/", "docs/", "tests/", ".bb/"))
-                    or path in {"tools/bb_perf_dispatch.py", "README.md"}
+                    str(path).startswith(("examples/", "docs/", "tests/"))
+                    or path == "README.md"
+                    or (
+                        maintenance
+                        and (str(path).startswith(".bb/") or path == "tools/bb_perf_dispatch.py")
+                    )
                 ):
                     fail(f"Non-runtime completion includes an ineligible path: {path}")
+
+    @staticmethod
+    def validate_owner_maintenance(
+        job: Job, evidence: dict[str, object], files: Sequence[Mapping[str, object]]
+    ) -> None:
+        """Bind an explicit owner update to root-owned, pinned acceptance code."""
+        authorization_path = Path(str(evidence.get("owner_authorization_path", "")))
+        storage_value = os.environ.get("BB_THREAD_STORAGE")
+        if not storage_value:
+            fail("Owner maintenance requires root-owned authorization and a pinned dispatcher")
+        storage = Path(storage_value).resolve()
+        verifier = Path(__file__).resolve()
+        if (
+            storage.name != job["thread_id"]
+            or not authorization_path.is_absolute()
+            or not authorization_path.resolve().is_relative_to(storage)
+            or verifier.is_relative_to(Path(job["workspace"]).resolve())
+        ):
+            fail("Owner maintenance requires root-owned authorization and a pinned dispatcher")
+        authorization = obj(json.loads(authorization_path.read_text()))
+        paths = sorted(
+            {
+                str(path)
+                for file in files
+                for path in (file["filename"], file.get("previous_filename", file["filename"]))
+            }
+        )
+        paths_hash = hashlib.sha256(
+            json.dumps(paths, ensure_ascii=False, separators=(",", ":")).encode()
+        ).hexdigest()
+        if (
+            authorization.get("kind") != "owner_authorized_automation_maintenance"
+            or authorization.get("root_thread_id") != job["thread_id"]
+            or authorization.get("root_thread_id") != os.environ.get("BB_THREAD_ID")
+            or not authorization.get("owner_request")
+            or authorization.get("head_sha") != job["head_sha"]
+            or authorization.get("base_sha") != evidence["base_sha"]
+            or authorization.get("changed_paths_sha256") != paths_hash
+            or authorization.get("dispatcher_sha256")
+            != hashlib.sha256(verifier.read_bytes()).hexdigest()
+        ):
+            fail("Owner maintenance authorization does not match the exact update")
 
 
 def parser() -> argparse.ArgumentParser:

@@ -5,7 +5,7 @@ import {tmpdir} from "node:os";
 import {join} from "node:path";
 import test from "node:test";
 const installer = new URL("../automation/install-runtime.mjs", import.meta.url).pathname;
-function fixture({matches = 1, checkoutMode = "source"} = {}) {
+function fixture({matches = 1, checkoutMode = "source", sourceHead = "a"} = {}) {
   const directory = mkdtempSync(join(tmpdir(), "bb-install-test-"));
   const source = join(directory, "source");
   const alternate = join(directory, "alternate");
@@ -17,13 +17,15 @@ function fixture({matches = 1, checkoutMode = "source"} = {}) {
   for (const p of [join(source,"tools"),join(source,".bb/automation/prompts"),state,bin,common,alternate,foreignCommon]) mkdirSync(p,{recursive:true});
   writeFileSync(join(source,"tools/bb_perf_dispatch.py"),"# frozen controller\n");
   writeFileSync(join(source,".bb/automation/prompts/DAILY.md"),"daily\n");
+  writeFileSync(join(source,".bb/automation/merge-gate.mjs"),"// frozen gate\n");
   writeFileSync(join(state,"config.json"),'"old-config"\n');
   writeFileSync(join(state,"controller.sh"),'old-script\n');
   writeFileSync(join(bin,"git"),`#!${process.execPath}
 const args=process.argv.slice(2); const ci=args.indexOf('-C'); const dir=ci<0?${JSON.stringify(source)}:args[ci+1];
 if(args.includes('--show-toplevel')) console.log(dir);
 else if(args.includes('--git-common-dir')) console.log(dir===${JSON.stringify(foreign)}?${JSON.stringify(foreignCommon)}:${JSON.stringify(common)});
-else if(args.includes('HEAD')) console.log((dir===${JSON.stringify(alternate)}?'b':'a').repeat(40));
+else if(args.includes('HEAD')) console.log((dir===${JSON.stringify(alternate)}?'b':${JSON.stringify(sourceHead)}).repeat(40));
+else if(args.includes('origin/main')) console.log('a'.repeat(40));
 else console.log('');
 `,{mode:0o700});
   writeFileSync(join(bin,"bb"),`#!${process.execPath}
@@ -74,5 +76,13 @@ test("a coordinator checkout can share the reviewed repository with a different 
     const result=JSON.parse(f.run());
     assert.equal(result.revision,'a'.repeat(40));
     assert.equal(JSON.parse(readFileSync(join(f.state,'config.json'),'utf8')).checkout,f.checkout);
+  } finally {rmSync(f.directory,{recursive:true,force:true});}
+});
+
+test("candidate acceptance code cannot be installed before merge",()=>{
+  const f=fixture({sourceHead:"b"});try {
+    assert.throws(f.run);
+    assert.equal(existsSync(join(f.directory,'calls')),false);
+    assert.equal(readFileSync(join(f.state,'config.json'),'utf8').trim(),'"old-config"');
   } finally {rmSync(f.directory,{recursive:true,force:true});}
 });

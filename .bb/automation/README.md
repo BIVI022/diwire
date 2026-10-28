@@ -60,8 +60,18 @@ job continues with a useful runnable example for a missing case. Keep the old
 attempts and start the example from fetched main. The non-runtime path requires
 example checks and independent review, all normal quality gates and exact-head
 remote CI. The merge helper and dispatcher verify every changed and renamed path
-before they waive performance measurements. Library, dependency, build or CI
+before they waive performance measurements. This unattended waiver excludes .bb/
+and dispatcher control code. Library, dependency, build or CI
 changes cannot use this path. Record `change_kind=non_runtime` throughout.
+
+An explicit owner-requested automation update has a separate maintenance path.
+Use owner-maintenance-authorization.example.json only for a current explicit
+owner request. Save the actual authorization under that visible root's BB storage.
+Its authorization binds the exact base/head, changed paths and fixed
+outside-checkout acceptance code. Independent control review binds the verifier
+hash. Ordinary daily workers cannot authorize this route. All common merge and
+post-merge gates still apply, without a speed claim for unchanged library code.
+The controller supplies its trusted pinned merge gate path in job context.
 
 Completion means a useful PR was merged and CI plus Docs passed on the actual
 merge SHA. A failed experiment or waiting receipt is not daily completion.
@@ -79,7 +89,7 @@ controlled evidence clears it. Independent daily work may continue.
 
 ## Installation and operations
 
-Install from a reviewed committed revision. The live controller uses a pinned
+Install only from fetched, merged main after review and post-merge checks. The live controller uses a pinned
 runtime copy outside Git worktrees. Keep its config, state, job receipts and
 installation manifest under an ignored directory such as
 `/Users/mac/os/.local/diwire/bb/`. Never put credentials in config or prompts.

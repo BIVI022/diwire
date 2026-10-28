@@ -974,8 +974,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from types import TracebackType
 
-from typing_extensions import Self
-
 from diwire import Container, Lifetime, Scope
 
 
@@ -991,7 +989,8 @@ class Session:
         self.pending: list[str] = []
         self.closed = False
 
-    def __enter__(self) -> Self:
+    # Keep this Python 3.10 example free of a typing-extensions runtime dependency.
+    def __enter__(self) -> Session:  # noqa: PYI034
         self.store.events.append("open")
         return self
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 from datetime import datetime, timedelta, timezone
@@ -995,10 +996,8 @@ def test_non_runtime_completion_verifies_the_remote_diff(fake: Fake) -> None:
         fake,
         [
             {"filename": "examples/ex_04_scopes_and_cleanup/05_unit_of_work.py"},
-            {"filename": "tools/bb_perf_dispatch.py"},
             {"filename": "docs/howto/patterns/unit-of-work.rst"},
             {"filename": "README.md"},
-            {"filename": ".bb/workflows/daily-perf.js"},
         ],
     )
     fake.controller.validate_non_runtime(
@@ -1031,6 +1030,9 @@ def test_non_runtime_requires_exact_validated_example_evidence(fake: Fake, field
         [{"filename": "pyproject.toml"}],
         [{"filename": ".github/workflows/ci.yaml"}],
         [{"filename": "tools/unknown.py"}],
+        [{"filename": "tools/bb_perf_dispatch.py"}],
+        [{"filename": ".bb/automation/merge-gate.mjs"}],
+        [{"filename": ".bb/workflows/daily-perf.js"}],
         [{"filename": "docs/guide.rst", "previous_filename": "src/diwire/__init__.py"}],
     ],
 )
@@ -1102,3 +1104,116 @@ def test_reopen_respects_provisioning_intents_and_live_terminal_roots(
         fake.controller.store.save()
     with pytest.raises(DispatchError, match="Another job owns"):
         _reopen_record(fake)
+
+
+def _maintenance_evidence(
+    fake: Fake, monkeypatch: pytest.MonkeyPatch
+) -> tuple[Path, list[dict[str, str]], Path]:
+    job = fake.job()
+    storage = fake.state / job["thread_id"]
+    storage.mkdir()
+    pinned = fake.state / "dispatcher.py"
+    pinned.write_text("# Independently reviewed pinned dispatcher")
+    monkeypatch.setattr("tools.bb_perf_dispatch.__file__", str(pinned))
+    monkeypatch.setenv("BB_THREAD_STORAGE", str(storage))
+    monkeypatch.setenv("BB_THREAD_ID", job["thread_id"])
+    files = [
+        {"filename": ".bb/automation/merge-gate.mjs"},
+        {"filename": "tools/bb_perf_dispatch.py"},
+    ]
+    paths = sorted(file["filename"] for file in files)
+    authorization = storage / "authorization.json"
+    authorization.write_text(
+        json.dumps(
+            {
+                "kind": "owner_authorized_automation_maintenance",
+                "root_thread_id": job["thread_id"],
+                "owner_request": "Owner explicitly requested this automation update",
+                "head_sha": fake.head,
+                "base_sha": "accepted-base",
+                "changed_paths_sha256": hashlib.sha256(
+                    json.dumps(paths, separators=(",", ":")).encode()
+                ).hexdigest(),
+                "dispatcher_sha256": hashlib.sha256(pinned.read_bytes()).hexdigest(),
+            }
+        )
+    )
+    evidence = _non_runtime_evidence(fake)
+    value = json.loads(evidence.read_text())
+    value.update(change_kind="automation_maintenance", owner_authorization_path=str(authorization))
+    evidence.write_text(json.dumps(value))
+    _comparison_runner(fake, files)
+    return evidence, files, authorization
+
+
+def test_explicit_owner_maintenance_uses_pinned_exact_update_evidence(
+    fake: Fake, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake.waiting()
+    evidence, _, _ = _maintenance_evidence(fake, monkeypatch)
+    fake.controller.validate_non_runtime(
+        fake.job(),
+        {"accepted_base_sha": "accepted-base", "change_kind": "automation_maintenance"},
+        str(evidence),
+    )
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "kind",
+        "root_thread_id",
+        "owner_request",
+        "head_sha",
+        "base_sha",
+        "changed_paths_sha256",
+        "dispatcher_sha256",
+    ],
+)
+def test_owner_maintenance_rejects_changed_authorization(
+    fake: Fake, monkeypatch: pytest.MonkeyPatch, field: str
+) -> None:
+    fake.waiting()
+    evidence, _, authorization = _maintenance_evidence(fake, monkeypatch)
+    value = json.loads(authorization.read_text())
+    value[field] = ""
+    authorization.write_text(json.dumps(value))
+    with pytest.raises(DispatchError, match="authorization does not match"):
+        fake.controller.validate_non_runtime(
+            fake.job(),
+            {"accepted_base_sha": "accepted-base", "change_kind": "automation_maintenance"},
+            str(evidence),
+        )
+
+
+@pytest.mark.parametrize("candidate_controlled", [True, False])
+def test_owner_maintenance_requires_root_storage_and_outside_checkout_dispatcher(
+    fake: Fake, monkeypatch: pytest.MonkeyPatch, *, candidate_controlled: bool
+) -> None:
+    fake.waiting()
+    evidence, files, _authorization = _maintenance_evidence(fake, monkeypatch)
+    value = json.loads(evidence.read_text())
+    if candidate_controlled:
+        monkeypatch.setattr(
+            "tools.bb_perf_dispatch.__file__", str(fake.workspace / "tools" / "bb_perf_dispatch.py")
+        )
+    else:
+        value["owner_authorization_path"] = str(fake.workspace / "authorization.json")
+    with pytest.raises(DispatchError, match="root-owned authorization and a pinned dispatcher"):
+        fake.controller.validate_owner_maintenance(fake.job(), value, files)
+
+
+@pytest.mark.parametrize("missing", [True, False])
+def test_owner_maintenance_rejects_missing_or_wrong_root_storage(
+    fake: Fake, monkeypatch: pytest.MonkeyPatch, *, missing: bool
+) -> None:
+    fake.waiting()
+    evidence, files, _ = _maintenance_evidence(fake, monkeypatch)
+    if missing:
+        monkeypatch.delenv("BB_THREAD_STORAGE")
+    else:
+        monkeypatch.setenv("BB_THREAD_STORAGE", str(fake.state))
+    with pytest.raises(DispatchError, match="root-owned authorization"):
+        fake.controller.validate_owner_maintenance(
+            fake.job(), json.loads(evidence.read_text()), files
+        )
