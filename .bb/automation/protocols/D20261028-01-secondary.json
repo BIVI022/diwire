@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "targets": [
+    "tests/performance/test_aresolve_workloads.py::test_benchmark_diwire_aresolve_mixed_graph"
+  ],
+  "protected": [
+    "tests/performance/test_async_collection_workloads.py::test_benchmark_diwire_async_collection[4-sync]",
+    "tests/performance/test_async_collection_workloads.py::test_benchmark_diwire_async_collection[4-async]",
+    "tests/performance/test_async_collection_workloads.py::test_benchmark_diwire_async_collection[16-sync]",
+    "tests/performance/test_async_collection_workloads.py::test_benchmark_diwire_async_collection[16-async]",
+    "tests/performance/test_async_dispatch_workloads.py::test_benchmark_diwire_aresolve_dispatch_patterns[same_identity]",
+    "tests/performance/test_async_dispatch_workloads.py::test_benchmark_diwire_aresolve_dispatch_patterns[same_equality]",
+    "tests/performance/test_async_dispatch_workloads.py::test_benchmark_diwire_aresolve_dispatch_patterns[alternate_identity_equality]",
+    "tests/performance/test_async_dispatch_workloads.py::test_benchmark_diwire_aresolve_dispatch_patterns[alternate_equal_aliases]",
+    "tests/performance/test_async_dispatch_workloads.py::test_benchmark_diwire_aresolve_dispatch_patterns[mixed_cached]",
+    "tests/performance/test_cached_scope_workloads.py::test_benchmark_diwire_aresolve_warm_request_cache[sync]",
+    "tests/performance/test_cached_scope_workloads.py::test_benchmark_diwire_aresolve_warm_request_cache[async]",
+    "tests/performance/test_cached_scope_workloads.py::test_benchmark_diwire_aresolve_warm_request_cache[suspending]",
+    "tests/performance/test_cached_scope_workloads.py::test_benchmark_diwire_resolve_warm_request_cache_with_thread_lock",
+    "tests/performance/test_cleanup_registration_workloads.py::test_benchmark_diwire_late_cleanup_registration",
+    "tests/performance/test_generic_compile_workloads.py::test_benchmark_diwire_generic_cold_compile[64]",
+    "tests/performance/test_generic_compile_workloads.py::test_benchmark_diwire_generic_cold_compile[256]",
+    "tests/performance/test_materialized_runtime_kwargs.py::test_benchmark_diwire_materialized_runtime_kwargs[_create_repo]",
+    "tests/performance/test_materialized_runtime_kwargs.py::test_benchmark_diwire_materialized_runtime_kwargs[_create_keyword_repo]"
+  ],
+  "practical_gain_floor": 0.05,
+  "allowed_regression": 0.02,
+  "baseline_spread_ceiling": 0.05,
+  "pair_count": 5,
+  "calibration_count": 3,
+  "process_timeout_seconds": 600,
+  "maximum_seconds": 4200,
+  "plan_path": ".bb/automation/protocols/D20261028-01.md",
+  "gain_rationale": "The public mixed async graph must gain more than 5% throughput. Discovery found 2.493% process spread and 6.53% helper self time. The 5% floor is an owner requirement above that observed noise, not a predicted gain."
+}
