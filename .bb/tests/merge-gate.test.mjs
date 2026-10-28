@@ -53,12 +53,7 @@ for (const [name, mutate] of [
   const f = fixture(); mutate(f);
   assert.equal(evaluate(f.snapshot, f.evidence, head, now).ready, false);
 });
-test("missing Python 3.13t check prevents merge", () => {
-  const {snapshot, evidence} = fixture();
-  snapshot.checks = snapshot.checks.filter(check => check.name !== "Lint & Tests (Python 3.13t)");
-  assert.equal(evaluate(snapshot, evidence, head, now).ready, false);
-});
-for (const name of required.filter(name => name.startsWith("E2E "))) {
+for (const name of required) {
   test(`missing ${name} prevents merge`, () => {
     const {snapshot, evidence} = fixture();
     snapshot.checks = snapshot.checks.filter(check => check.name !== name);
