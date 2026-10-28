@@ -10,6 +10,7 @@ import argparse
 import asyncio
 import hashlib
 import json
+import logging
 import math
 import os
 import signal
@@ -85,6 +86,7 @@ def make_app(subject: Path) -> FastAPI:
             yield
         finally:
             await container.aclose()
+            logging.getLogger("uvicorn.error").info("DIWIRE_SOCKET_CLEAN_SHUTDOWN")
 
     app = FastAPI(lifespan=lifespan)
 
@@ -142,9 +144,12 @@ def server(output: Path, subject: Path) -> Iterator[str]:
                 process.kill()
                 process.wait(timeout=5)
                 raise
-            if code != 0:
+            # Uvicorn restores and re-raises SIGTERM after graceful shutdown.
+            if code not in (0, -signal.SIGTERM):
                 msg = f"Socket server exit code: {code}"
                 raise RuntimeError(msg)
+    if "DIWIRE_SOCKET_CLEAN_SHUTDOWN" not in (output / "server.log").read_text():
+        raise RuntimeError("Socket server did not confirm container shutdown")
 
 
 async def requests(client: httpx.AsyncClient, route: str, count: int) -> dict[str, object]:
