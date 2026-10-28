@@ -11,7 +11,6 @@ from types import ModuleType
 from typing import Annotated, Any, ForwardRef, Literal, NamedTuple, cast
 
 import attrs
-import msgspec
 import pytest
 from typing_extensions import Self
 
@@ -367,6 +366,10 @@ def test_extracts_dependencies_from_attrs_define_concrete_type() -> None:
 
 
 def test_extracts_dependencies_from_msgspec_struct_concrete_type() -> None:
+    pytest.importorskip("msgspec")
+
+    import msgspec
+
     class ConcreteService(msgspec.Struct):
         first: ServiceA
         second: ServiceB
@@ -383,13 +386,19 @@ def test_extracts_dependencies_from_msgspec_struct_concrete_type() -> None:
 
 
 def test_extracts_dependencies_from_msgspec_kw_only_struct_concrete_type() -> None:
-    class ConcreteService(msgspec.Struct, kw_only=True):
-        first: ServiceA
-        second: ServiceB = ServiceB()
+    pytest.importorskip("msgspec")
+
+    import msgspec
+
+    concrete_service_type = msgspec.defstruct(
+        "ConcreteService",
+        [("first", ServiceA), ("second", ServiceB, ServiceB())],
+        kw_only=True,
+    )
 
     extractor = ProviderDependenciesExtractor()
 
-    dependencies = extractor.extract_from_concrete_type(ConcreteService)
+    dependencies = extractor.extract_from_concrete_type(concrete_service_type)
 
     _assert_dependencies(
         dependencies,

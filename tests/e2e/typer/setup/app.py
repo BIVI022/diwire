@@ -4,6 +4,7 @@ import typer
 
 from diwire import Container, Injected, Lifetime, Scope, resolver_context
 from diwire.integrations.typer import add_typer_context
+from tests.e2e.runtime import assert_free_threaded_runtime
 from tests.e2e.typer.setup.services import ContextInfoService
 
 app = typer.Typer()
@@ -39,6 +40,7 @@ def context_service(
 
 
 def main() -> None:
+    assert_free_threaded_runtime()
     app()
 
 

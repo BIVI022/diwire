@@ -22,8 +22,8 @@ _UPDATE_COMMAND = (
 )
 _ADDRESS_PATTERN = re.compile(r"0x[0-9a-fA-F]+")
 pytestmark = pytest.mark.skipif(
-    sys.version_info[:2] != (3, 14),
-    reason="Public API signature snapshot is maintained only on Python 3.14.",
+    sys.version_info[:2] not in {(3, 14), (3, 15)},
+    reason="Public API signature snapshot is maintained on Python 3.14 and 3.15.",
 )
 
 
