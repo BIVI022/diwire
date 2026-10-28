@@ -13,6 +13,8 @@ const command = (bin, args) => execFileSync(bin, args, {encoding: "utf8", maxBuf
 const root = command("git", ["rev-parse", "--show-toplevel"]);
 if (command("git", ["status", "--porcelain"])) throw new Error("Install from a clean committed worktree");
 const revision = command("git", ["rev-parse", "HEAD"]);
+command("git", ["fetch", "origin", "main"]);
+if (revision !== command("git", ["rev-parse", "origin/main"])) throw new Error("Install acceptance code only from fetched, merged main");
 const checkout = resolve(options.get("--checkout"));
 const checkoutRoot = command("git", ["-C", checkout, "rev-parse", "--show-toplevel"]);
 const commonDirectory = path => realpathSync(resolve(path, command("git", ["-C", path, "rev-parse", "--git-common-dir"])));
@@ -27,7 +29,7 @@ const stateRoot = resolve(options.get("--state-root"));
 const runtime = join(stateRoot, "runtime", revision);
 const prompts = join(runtime, "prompts");
 mkdirSync(prompts, {recursive: true});
-const files = new Map([["tools/bb_perf_dispatch.py", "bb_perf_dispatch.py"]]);
+const files = new Map([["tools/bb_perf_dispatch.py", "bb_perf_dispatch.py"], [".bb/automation/merge-gate.mjs", "merge-gate.mjs"]]);
 for (const name of readdirSync(join(root, ".bb/automation/prompts"))) if (name.endsWith(".md")) files.set(".bb/automation/prompts/" + name, "prompts/" + name);
 const fingerprints = {};
 for (const [source, target] of files) {

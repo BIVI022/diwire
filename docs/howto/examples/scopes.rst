@@ -10,6 +10,7 @@ What you'll learn
 - Use ``enter_scope()`` to create nested scopes.
 - Use ``Lifetime.SCOPED`` for per-scope caching.
 - Use generator providers for deterministic cleanup.
+- Share a transaction across services with the :doc:`../patterns/unit-of-work` pattern.
 
 Scope transitions
 -----------------

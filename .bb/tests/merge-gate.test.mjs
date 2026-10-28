@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { evaluate, reviewInventoryHash, readSnapshot } from "../automation/merge-gate.mjs";
+import { evaluate, reviewInventoryHash, readSnapshot, changedPathsHash, verifyOwnerMaintenance } from "../automation/merge-gate.mjs";
 const head = "a".repeat(40);
 const base = "b".repeat(40);
 const now = Date.parse("2026-10-27T12:00:00Z");
@@ -134,4 +134,84 @@ test("a reply-only review does not replace a rate-limited full review",()=>{
   snapshot.statuses[0].description="Review rate limited";
   evidence.review_inventory_sha256=reviewInventoryHash(snapshot);
   assert.equal(evaluate(snapshot,evidence,head,now).ready,false);
+});
+
+function exampleFixture() {
+  const f = fixture();
+  f.snapshot.baseComparison.files = [
+    {filename: "examples/ex_04_scopes_and_cleanup/05_unit_of_work.py"},
+    {filename: "docs/howto/patterns/unit-of-work.rst"},
+    {filename: "tests/examples/test_examples_expected_output.py"},
+  ];
+  Object.assign(f.evidence, {change_kind: "non_runtime", example_validation: "passed", measurement_review: "not_applicable"});
+  delete f.evidence.measurement;
+  delete f.snapshot.measurementRun;
+  delete f.snapshot.measurementDecision;
+  delete f.snapshot.measurementArtifactsVerified;
+  return f;
+}
+test("verified non-runtime example uses runnable evidence instead of speed claims", () => {
+  const f = exampleFixture();
+  assert.deepEqual(evaluate(f.snapshot, f.evidence, head, now).errors, []);
+});
+for (const path of ["src/diwire/__init__.py", "uv.lock", "pyproject.toml", ".github/workflows/ci.yaml", "tools/unknown.py", "tools/bb_perf_dispatch.py", ".bb/automation/merge-gate.mjs", ".bb/workflows/daily-perf.js"]) {
+  test(`non-runtime declaration cannot hide ${path}`, () => {
+    const f = exampleFixture();
+    f.snapshot.baseComparison.files.push({filename: path});
+    assert.equal(evaluate(f.snapshot, f.evidence, head, now).ready, false);
+  });
+}
+test("renaming runtime source into an example still requires measurement", () => {
+  const f = exampleFixture();
+  f.snapshot.baseComparison.files[0].previous_filename = "src/diwire/__init__.py";
+  assert.equal(evaluate(f.snapshot, f.evidence, head, now).ready, false);
+});
+for (const files of [undefined, [], Array.from({length:300}, () => ({filename: "docs/guide.rst"}))]) {
+  test(`missing or truncated non-runtime scope cannot waive measurements (${files?.length})`, () => {
+    const f = exampleFixture(); f.snapshot.baseComparison.files = files;
+    assert.equal(evaluate(f.snapshot, f.evidence, head, now).ready, false);
+  });
+}
+test("non-runtime declaration still needs runnable example validation", () => {
+  const f = exampleFixture(); delete f.evidence.example_validation;
+  assert.equal(evaluate(f.snapshot, f.evidence, head, now).ready, false);
+});
+test("non-runtime declaration keeps review, CI, base and E2E gates", () => {
+  for (const mutate of [
+    f => {f.snapshot.checks.pop();},
+    f => {f.evidence.fastapi_e2e_head = base;},
+    f => {f.snapshot.threads[0].isResolved = false;},
+    f => {f.snapshot.currentMain = "c".repeat(40);},
+  ]) {
+    const f = exampleFixture(); mutate(f);
+    assert.equal(evaluate(f.snapshot, f.evidence, head, now).ready, false);
+  }
+});
+
+function maintenanceFixture() {
+  const f=exampleFixture();
+  f.evidence.change_kind="automation_maintenance";
+  f.snapshot.baseComparison.files.push({filename:".bb/automation/merge-gate.mjs"},{filename:"tools/bb_perf_dispatch.py"});
+  f.snapshot.ownerMaintenanceVerified=true;
+  f.snapshot.ownerMaintenanceAuthorization={head_sha:head,base_sha:base,changed_paths_sha256:changedPathsHash(f.snapshot.baseComparison.files),verifier_sha256:"e".repeat(64)};
+  f.snapshot.independentReviewVerified=true;
+  f.snapshot.independentReview={head_sha:head,base_sha:base,review_inventory_sha256:reviewInventoryHash(f.snapshot),automation_maintenance_review:"passed",acceptance_verifier_sha256:"e".repeat(64)};
+  return f;
+}
+test("an explicit pinned owner update keeps the common gates",()=>{
+  const f=maintenanceFixture();
+  assert.deepEqual(evaluate(f.snapshot,f.evidence,head,now).errors,[]);
+});
+for(const [name,mutate] of [
+  ["no owner verification",f=>{f.snapshot.ownerMaintenanceVerified=false;}],
+  ["stale authorized head",f=>{f.snapshot.ownerMaintenanceAuthorization.head_sha=base;}],
+  ["stale authorized base",f=>{f.snapshot.ownerMaintenanceAuthorization.base_sha=head;}],
+  ["changed file inventory",f=>{f.snapshot.ownerMaintenanceAuthorization.changed_paths_sha256="0".repeat(64);}],
+  ["unreviewed verifier",f=>{f.snapshot.independentReview.acceptance_verifier_sha256="0".repeat(64);}],
+  ["missing independent control review",f=>{delete f.snapshot.independentReview.automation_maintenance_review;}],
+  ["stale independent review",f=>{f.snapshot.independentReview.head_sha=base;}],
+  ["runtime edit",f=>{f.snapshot.baseComparison.files.push({filename:"src/diwire/__init__.py"});}],
+  ["failed normal CI",f=>{f.snapshot.checks[0].conclusion="failure";}],
+]) test(`owner maintenance rejects ${name}`,()=>{
+  const f=maintenanceFixture();mutate(f);assert.equal(evaluate(f.snapshot,f.evidence,head,now).ready,false);
 });

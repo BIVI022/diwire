@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync, mkdtempSync, rmSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve, sep, isAbsolute, dirname, basename } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const requiredChecks = [
   ...["3.10", "3.11", "3.12", "3.13", "3.13t", "3.14", "3.14t", "3.15", "3.15t"].map(v => `Lint & Tests (Python ${v})`),
@@ -16,6 +16,30 @@ const conditionalSkips = new Set(["dependabot-auto-merge", "H005 calibrated allo
 const shaPattern = /^[0-9a-f]{40}$/;
 export function reviewInventoryHash(snapshot) {
   return createHash("sha256").update(JSON.stringify({comments: snapshot.comments, reviews: snapshot.reviews, threads: snapshot.threads})).digest("hex");
+}
+export function nonRuntimeScope(files, maintenance = false) {
+  const eligible = path => typeof path === "string" &&
+    (/^(examples|docs|tests)\//.test(path) || path === "README.md" ||
+      (maintenance && (path.startsWith(".bb/") || path === "tools/bb_perf_dispatch.py")));
+  return Array.isArray(files) && files.length > 0 && files.length < 300 &&
+    files.every(file => eligible(file.filename) && (!file.previous_filename || eligible(file.previous_filename)));
+}
+export function changedPathsHash(files) {
+  const paths = [...new Set(files.flatMap(file => [file.filename, ...(file.previous_filename ? [file.previous_filename] : [])]))].sort();
+  return createHash("sha256").update(JSON.stringify(paths)).digest("hex");
+}
+export function verifyOwnerMaintenance(path, context = {threadId:process.env.BB_THREAD_ID,threadStorage:process.env.BB_THREAD_STORAGE,verifierPath:fileURLToPath(import.meta.url)}) {
+  if (!isAbsolute(path) || !context.threadId || !context.threadStorage) throw new Error("Owner maintenance needs an absolute root-owned authorization receipt");
+  const canonical = realpathSync(path);
+  const storage = realpathSync(context.threadStorage);
+  const verifier = realpathSync(context.verifierPath);
+  const workspace = realpathSync(context.workspace ?? JSON.parse(execFileSync("bb", ["thread","show",context.threadId,"--json"], {encoding:"utf8",maxBuffer:1024*1024})).environment.path);
+  const authorization = JSON.parse(readFileSync(canonical,"utf8"));
+  const verified = basename(storage) === context.threadId && canonical.startsWith(storage + sep) && !verifier.startsWith(workspace + sep) &&
+    authorization.kind === "owner_authorized_automation_maintenance" && authorization.root_thread_id === context.threadId &&
+    typeof authorization.owner_request === "string" && authorization.owner_request.trim().length > 0 &&
+    authorization.verifier_sha256 === createHash("sha256").update(readFileSync(verifier)).digest("hex");
+  return {authorization,verified};
 }
 export function evaluate(snapshot, evidence, expectedHead, now = Date.now()) {
   const errors = [];
@@ -45,17 +69,33 @@ export function evaluate(snapshot, evidence, expectedHead, now = Date.now()) {
   for (const r of snapshot.reviews) if (["APPROVED", "CHANGES_REQUESTED", "DISMISSED"].includes(r.state)) latestReviews.set(r.author?.login, r);
   if ([...latestReviews.values()].some(r => r.state === "CHANGES_REQUESTED")) errors.push("A reviewer still requests changes");
   if (evidence.head_sha !== expectedHead || evidence.base_sha !== snapshot.currentMain) errors.push("Evidence is stale for head or base");
-  for (const key of ["semantic_review", "measurement_review", "lint", "tests", "api_signatures", "fastapi_e2e", "all_review_comments_read", "all_findings_addressed"]) {
+  const maintenance = evidence.change_kind === "automation_maintenance";
+  const nonRuntime = evidence.change_kind === "non_runtime" || maintenance;
+  for (const key of ["semantic_review", "lint", "tests", "api_signatures", "fastapi_e2e", "all_review_comments_read", "all_findings_addressed"]) {
     if (evidence[key] !== "passed") errors.push(`Evidence missing: ${key}`);
   }
-  if (evidence.measurement?.outcome !== "accepted" || evidence.measurement?.candidate_sha !== expectedHead || evidence.measurement?.base_sha !== snapshot.currentMain || !/^https:\/\/github.com\/maksimzayats\/diwire\/actions\/runs\/\d+$/.test(evidence.measurement?.run_url ?? "")) errors.push("Accepted exact-head Linux comparison receipt is missing");
+  if (nonRuntime) {
+    if (!nonRuntimeScope(snapshot.baseComparison?.files, maintenance)) errors.push("Non-runtime diff contains ineligible paths or is incomplete");
+    if (evidence.example_validation !== "passed" || evidence.measurement_review !== "not_applicable") errors.push("Runnable example validation or non-runtime review is missing");
+    if (maintenance) {
+      const approval = snapshot.ownerMaintenanceAuthorization;
+      if (!snapshot.ownerMaintenanceVerified || approval?.head_sha !== expectedHead || approval?.base_sha !== snapshot.currentMain ||
+          !nonRuntimeScope(snapshot.baseComparison?.files, true) || approval?.changed_paths_sha256 !== changedPathsHash(snapshot.baseComparison.files) ||
+          !fallback || snapshot.independentReview?.automation_maintenance_review !== "passed" ||
+          snapshot.independentReview?.acceptance_verifier_sha256 !== approval?.verifier_sha256)
+        errors.push("Explicit owner authorization, pinned verifier or independent control review is missing");
+    }
+  } else {
+    if (evidence.measurement_review !== "passed") errors.push("Evidence missing: measurement_review");
+    if (evidence.measurement?.outcome !== "accepted" || evidence.measurement?.candidate_sha !== expectedHead || evidence.measurement?.base_sha !== snapshot.currentMain || !/^https:\/\/github.com\/maksimzayats\/diwire\/actions\/runs\/\d+$/.test(evidence.measurement?.run_url ?? "")) errors.push("Accepted exact-head Linux comparison receipt is missing");
+    if (snapshot.measurementRun?.headSha !== expectedHead || snapshot.measurementRun?.status !== "completed" || snapshot.measurementRun?.conclusion !== "success") errors.push("Remote measurement run is not green for this exact head");
+    if (snapshot.measurementRun?.workflowPath !== ".github/workflows/bb-performance.yaml" || snapshot.measurementRun?.event !== "workflow_dispatch") errors.push("Measurement receipt is not the performance workflow");
+    const decision = snapshot.measurementDecision;
+    if (!snapshot.measurementArtifactsVerified || decision?.status !== "accepted" || decision?.identical_source !== false || decision?.base_sha !== snapshot.currentMain || decision?.candidate_sha !== expectedHead || !/^[0-9a-f]{64}$/.test(evidence.measurement?.protocol_sha256 ?? "") || decision?.protocol_sha256 !== evidence.measurement?.protocol_sha256) errors.push("Remote performance decision or artifact hashes are not accepted for these inputs");
+  }
   if (evidence.fastapi_e2e_head !== expectedHead || !evidence.evidence_directory) errors.push("Final exact-head E2E receipt is missing");
   if (!Array.isArray(evidence.reviewed_comment_ids) || !Array.isArray(evidence.reviewed_review_ids)) errors.push("Review-read inventory is missing");
-  if (snapshot.measurementRun?.headSha !== expectedHead || snapshot.measurementRun?.status !== "completed" || snapshot.measurementRun?.conclusion !== "success") errors.push("Remote measurement run is not green for this exact head");
   if (evidence.review_inventory_sha256 !== reviewInventoryHash(snapshot)) errors.push("Review content changed or its read receipt is missing");
-  if (snapshot.measurementRun?.workflowPath !== ".github/workflows/bb-performance.yaml" || snapshot.measurementRun?.event !== "workflow_dispatch") errors.push("Measurement receipt is not the performance workflow");
-  const decision = snapshot.measurementDecision;
-  if (!snapshot.measurementArtifactsVerified || decision?.status !== "accepted" || decision?.identical_source !== false || decision?.base_sha !== snapshot.currentMain || decision?.candidate_sha !== expectedHead || !/^[0-9a-f]{64}$/.test(evidence.measurement?.protocol_sha256 ?? "") || decision?.protocol_sha256 !== evidence.measurement?.protocol_sha256) errors.push("Remote performance decision or artifact hashes are not accepted for these inputs");
   const commentIds = new Set(evidence.reviewed_comment_ids ?? []);
   const reviewIds = new Set(evidence.reviewed_review_ids ?? []);
   for (const item of snapshot.comments) if (!commentIds.has(item.id)) errors.push(`Comment was not included in review receipt: ${item.id}`);
@@ -76,7 +116,7 @@ function pages(query, select, request = gh) {
   } while (cursor);
   return items;
 }
-export function readSnapshot(repo, number, expectedHead, measurementUrl, reviewNotBefore, request = gh, independentReviewPath) {
+export function readSnapshot(repo, number, expectedHead, measurementUrl, reviewNotBefore, request = gh, independentReviewPath, ownerAuthorizationPath) {
   if (repo !== "maksimzayats/diwire" || !Number.isSafeInteger(number) || number <= 0 || !shaPattern.test(expectedHead)) throw new Error("Invalid repository, PR or head");
   const pr = request(["pr", "view", String(number), "--repo", repo, "--json", "state,isDraft,headRefOid,baseRefOid,baseRefName,mergeable,reviewDecision"]);
   const currentMain = request(["api", `repos/${repo}/commits/main`]).sha;
@@ -123,7 +163,8 @@ export function readSnapshot(repo, number, expectedHead, measurementUrl, reviewN
   const independent = independentReviewPath ? verifyIndependentReview(independentReviewPath) : {report:null,verified:false};
   const independentReview = independent.report;
   const independentReviewVerified = independent.verified;
-  return {pr, currentMain, baseComparison, comments, reviews, threads, checks, statuses, headPushedAt, reviewNotBefore, measurementRun, measurementDecision, measurementArtifactsVerified, independentReview, independentReviewVerified};
+  const owner = ownerAuthorizationPath ? verifyOwnerMaintenance(ownerAuthorizationPath) : {authorization:null,verified:false};
+  return {ownerMaintenanceAuthorization:owner.authorization,ownerMaintenanceVerified:owner.verified,pr, currentMain, baseComparison, comments, reviews, threads, checks, statuses, headPushedAt, reviewNotBefore, measurementRun, measurementDecision, measurementArtifactsVerified, independentReview, independentReviewVerified};
 }
 export function verifyIndependentReview(path, request = args => JSON.parse(execFileSync("bb", args, {encoding:"utf8",maxBuffer:1024*1024})), context = {threadId:process.env.BB_THREAD_ID,threadStorage:process.env.BB_THREAD_STORAGE}) {
   if (!isAbsolute(path) || !context.threadId || !context.threadStorage) throw new Error("Independent verification requires an absolute report and BB thread context");
@@ -152,7 +193,7 @@ export function main(argv) {
     values.set(argv[i], argv[i + 1]);
   }
   const evidence = JSON.parse(readFileSync(values.get("--evidence"), "utf8"));
-  const snapshot = readSnapshot(values.get("--repo"), Number(values.get("--pr")), values.get("--head"), evidence.measurement?.run_url, values.get("--review-not-before"), undefined, evidence.independent_ai_review_path);
+  const snapshot = readSnapshot(values.get("--repo"), Number(values.get("--pr")), values.get("--head"), evidence.measurement?.run_url, values.get("--review-not-before"), undefined, evidence.independent_ai_review_path, evidence.owner_authorization_path);
   const verdict = evaluate(snapshot, evidence, values.get("--head"));
   const output = values.get("--output");
   if (!output) throw new Error("An output receipt path is required");
@@ -161,7 +202,7 @@ export function main(argv) {
   if (values.get("--merge")) {
     // Re-read after the inventory/evidence checks. The SHA fence below also
     // prevents a push racing the merge from changing the accepted head.
-    const final = readSnapshot(values.get("--repo"), Number(values.get("--pr")), values.get("--head"), evidence.measurement?.run_url, values.get("--review-not-before"), undefined, evidence.independent_ai_review_path);
+    const final = readSnapshot(values.get("--repo"), Number(values.get("--pr")), values.get("--head"), evidence.measurement?.run_url, values.get("--review-not-before"), undefined, evidence.independent_ai_review_path, evidence.owner_authorization_path);
     const gate = evaluate(final, evidence, values.get("--head"));
     if (!gate.ready) throw new Error("Merge conditions changed: " + gate.errors.join("; "));
     execFileSync("gh", ["pr", "merge", values.get("--pr"), "--repo", values.get("--repo"), "--squash", "--match-head-commit", values.get("--head")], {stdio: "inherit"});

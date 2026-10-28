@@ -1,0 +1,10 @@
+{
+  "kind": "owner_authorized_automation_maintenance",
+  "root_thread_id": "ACTUAL_VISIBLE_ROOT_BB_THREAD_ID",
+  "owner_request": "Reference and scope of the current explicit owner request",
+  "head_sha": "FULL_REVIEWED_PR_HEAD_SHA",
+  "base_sha": "FULL_FETCHED_MAIN_SHA",
+  "changed_paths_sha256": "HASH_FROM_changedPathsHash_OF_THE_COMPLETE_DIFF",
+  "verifier_sha256": "SHA256_OF_THE_FIXED_OUTSIDE_CHECKOUT_MERGE_GATE",
+  "dispatcher_sha256": "SHA256_OF_THE_FIXED_OUTSIDE_CHECKOUT_DISPATCHER"
+}

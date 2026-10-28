@@ -1,6 +1,6 @@
 export const meta = {
   name: "daily-perf",
-  description: "Find, implement, measure and review one small DIWire performance PR.",
+  description: "Deliver a useful daily PR. Prefer measured performance; otherwise add a runnable example.",
   phases: [
     { title: "Findings" },
     { title: "Implementation" },
@@ -8,6 +8,7 @@ export const meta = {
     { title: "Validation" },
     { title: "Measurement review" },
     { title: "Pull request" },
+    { title: "Example" },
   ],
 };
 const job = args.job;
@@ -24,6 +25,7 @@ const resultSchema = {
     outcome: { type: "string", enum: ["ready", "accepted", "rejected", "inconclusive", "blocked", "pr_open"] },
     summary: { type: "string" }, evidence_path: { type: "string" }, head_sha: { type: "string" },
     pr: { type: "integer", minimum: 0 }, measurement_run_url: { type: "string" },
+    change_kind: { type: "string", enum: ["performance", "non_runtime"] },
   },
 };
 const fullSha = /^[0-9a-f]{40}$/;
@@ -110,7 +112,8 @@ for (const candidate of findings.candidates) {
     "it before retry. Wait for that run, download complete raw artifacts, check imported source and dependency hashes, " +
     "every target/protected cell, noise and uncertainty. Treat rejection/inconclusive as such. A successful workflow " +
     "exit or generic competitor report does not prove gain. No same-source favorable-sample rerun. " +
-    "No PR yet. Return accepted only on useful public-workload benefit with all gates passing on this head.", {
+    "No PR yet. Return accepted only on useful public-workload benefit with local gates and official measurements passing. " +
+    "Supported Python remote CI and normal exact-head checks start after PR creation and remain mandatory root merge gates.", {
     label: "Validate and measure " + candidate.id, phase: "Validation", schema: resultSchema,
   });
   if (validation?.outcome === "accepted" && !receipt(validation, implemented.head_sha, true)) return { outcome: "blocked", attempts, findings, reason: "Validation does not match candidate head or run." };
@@ -123,7 +126,7 @@ for (const candidate of findings.candidates) {
     JSON.stringify(validation) + ". Recompute effects, pair directions, noise and uncertainty from all raw data. " +
     "Verify frozen harness, subjects, runtimes and lock, realistic target and protected workloads, and all quality gates. " +
     "Check exact source head still matches. Refute benchmark gaming and overly broad claims. Read-only. Return accepted " +
-    "only if both practical value and absence of unacceptable regression are established.", {
+    "only if both practical value and absence of unacceptable regression are established. Supported Python remote CI runs after PR creation and remains a root merge gate.", {
     label: "Audit measurements " + candidate.id, phase: "Measurement review", schema: resultSchema,
   });
   attempts.push({ candidate, implementation: implemented, semantic, first_semantic: firstSemantic, fix: fixed, validation, measurement });
@@ -138,12 +141,53 @@ for (const candidate of findings.candidates) {
     "Use the PR skill. Include measured effects, realistic scope, raw artifact/run links, exact SHAs and quality gates. " +
     "Do not change source or commit a report after measured head without revalidation. Verify configured AI review " +
     "and CI started. Return pr_open with PR number, full head SHA, evidence path and measurement run URL. " +
-    "Do not merge. The root records waiting_review; a new follow-up thread will read reviews after ten minutes.", {
+    "Do not merge from this worker. The root records waiting_review, then continues in this same root through review, fixes, merge and post-merge checks using FOLLOWUP.md.", {
     label: "Open measured PR", phase: "Pull request", schema: resultSchema,
   });
   if (!pr || pr.outcome !== "pr_open" || pr.pr <= 0 || !receipt(pr, validation.head_sha, true) || pr.measurement_run_url !== validation.measurement_run_url) {
     return { outcome: "blocked", attempts, findings, pr, reason: "PR receipt incomplete or not validated." };
   }
-  return { ...pr, outcome: "waiting_review", attempts, findings };
+  return { ...pr, change_kind: "performance", outcome: "waiting_review", attempts, findings, next_action: "Root must continue with FOLLOWUP.md through merge and post-merge CI. This is a checkpoint, not completion." };
 }
-return { outcome: "inconclusive", attempts, findings, reason: "No candidate cleared all declared gates." };
+// Failed performance attempts remain evidence. They do not finish the daily job.
+const fallbackScope = policy + "\nNo performance candidate qualified. Preserve all attempts: " + JSON.stringify(attempts) +
+  "\nDiscovery: " + JSON.stringify(findings);
+const example = await agent(fallbackScope + "\nContinue with a useful runnable example. Inspect current examples, guides and tests. " +
+  "Choose a missing real scenario or an uncovered error/cleanup case. State its user value and checks before editing. " +
+  "Keep rejected runtime work on its own branch. Start from fetched main on a new owned clean branch. " +
+  "Use only the non-runtime paths allowed by POLICY.md. Add the example, behavior tests and usage docs; regenerate " +
+  "examples/README.md with its generator. Prove runtime source, dependencies, build and CI remain unchanged. " +
+  "Run focused example checks, inspect the whole diff, verify owner identity and commit. Return ready with " +
+  "change_kind=non_runtime and an empty measurement_run_url. Make no speed claim. No PR yet.", {
+  label: "Implement useful example", phase: "Example", schema: resultSchema,
+});
+function exampleReceipt(value, head) {
+  return receipt(value, head) && value.change_kind === "non_runtime" && value.measurement_run_url === "";
+}
+if (example?.outcome !== "ready" || !exampleReceipt(example)) return {outcome: "blocked", attempts, findings, example, reason: "Example preparation failed or its receipt is incomplete."};
+const exampleReview = await agent(fallbackScope + "\nIndependently review this exact example candidate: " + JSON.stringify(example) +
+  ". Check actual user value, lack of duplication, full diff, public behavior and error/cleanup assertions. " +
+  "Verify all changed and renamed paths satisfy POLICY.md non-runtime scope. Run independent checks. Read-only source. " +
+  "Return accepted only with no supported finding, change_kind=non_runtime and empty measurement_run_url.", {
+  label: "Review useful example", phase: "Behavior review", schema: resultSchema,
+});
+if (exampleReview?.outcome !== "accepted" || !exampleReceipt(exampleReview, example.head_sha)) return {outcome: "blocked", attempts, findings, example, exampleReview, reason: "Example review did not pass. Root must fix supported findings and continue."};
+const exampleValidation = await agent(fallbackScope + "\nValidate the exact reviewed example: " + JSON.stringify({example, exampleReview}) +
+  ". Run runnable example and behavior checks, make lint, make test with 100% configured coverage and unchanged API signatures, " +
+  "then final make test-e2e-fastapi with a unique Compose project. Verify clean scope and exact head. Push only the owned " +
+  "branch with owner identity. Return accepted, change_kind=non_runtime, empty measurement_run_url and full evidence. " +
+  "No performance timing is needed for a verified non-runtime diff. No PR yet.", {
+  label: "Validate useful example", phase: "Validation", schema: resultSchema,
+});
+if (exampleValidation?.outcome !== "accepted" || !exampleReceipt(exampleValidation, example.head_sha)) return {outcome: "blocked", attempts, findings, example, exampleReview, exampleValidation, reason: "Example validation did not pass. Root must fix the failed gate and continue."};
+const examplePr = await agent(fallbackScope + "\nOpen one useful example PR for this exact validated head: " +
+  JSON.stringify({example, exampleReview, exampleValidation}) + ". Fetch main first; if base changed, revalidate the resulting head. " +
+  "Reconcile existing PRs for the branch. Use the PR skill. Explain the missing case, checks and unchanged runtime scope. " +
+  "Include earlier experiment evidence as context without a speed claim. Verify CI and configured review started. " +
+  "Return pr_open with change_kind=non_runtime, exact head, PR number, evidence and empty measurement_run_url. " +
+  "This worker does not merge. The visible root continues through review, exact-head merge and post-merge CI.", {
+  label: "Open useful example PR", phase: "Pull request", schema: resultSchema,
+});
+if (examplePr?.outcome !== "pr_open" || examplePr.pr <= 0 || !exampleReceipt(examplePr, example.head_sha)) return {outcome: "blocked", attempts, findings, examplePr, reason: "Example PR receipt is incomplete."};
+return {...examplePr, outcome: "waiting_review", attempts, findings, example, exampleReview, exampleValidation,
+  next_action: "Root must continue with FOLLOWUP.md through merge and post-merge CI. This is a checkpoint, not completion."};
