@@ -3,6 +3,8 @@ services:
     build:
       context: ../../..
       dockerfile: tests/e2e/typer/Dockerfile
+      args:
+        PYTHON_VERSION: ${E2E_PYTHON_VERSION:-3.14}
     environment:
       TYPER_E2E_ENABLED: "1"
     command: ["uv", "run", "pytest", "tests/e2e/typer/tests/test_cli.py", "-q", "-ra"]

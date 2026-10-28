@@ -4,7 +4,13 @@ import { evaluate, reviewInventoryHash, readSnapshot } from "../automation/merge
 const head = "a".repeat(40);
 const base = "b".repeat(40);
 const now = Date.parse("2026-10-27T12:00:00Z");
-const required = [...["3.10", "3.11", "3.12", "3.13", "3.13t", "3.14", "3.14t", "3.15", "3.15t"].map(v => `Lint & Tests (Python ${v})`), "E2E FastAPI (Docker Compose, Python 3.14)", "E2E aiohttp (Docker Compose, Python 3.14)", "E2E Celery (Docker Compose, Python 3.14)", "Docs Build"];
+const required = [
+  ...["3.10", "3.11", "3.12", "3.13", "3.13t", "3.14", "3.14t", "3.15", "3.15t"].map(v => `Lint & Tests (Python ${v})`),
+  ...["3.14", "3.15", "3.15t"].flatMap(version =>
+    ["FastAPI", "aiohttp", "Celery", "Litestar", "Flask", "Typer"].map(framework =>
+      `E2E ${framework} (Docker Compose, Python ${version})`)),
+  "Docs Build", "Docs Build (Python 3.15)", "Docs Build (Python 3.15t)",
+];
 function fixture() {
   const snapshot = {
     pr: {headRefOid: head, baseRefOid: base, baseRefName: "main", state: "OPEN", isDraft: false, mergeable: "MERGEABLE", reviewDecision: ""},
@@ -47,6 +53,13 @@ for (const [name, mutate] of [
   const f = fixture(); mutate(f);
   assert.equal(evaluate(f.snapshot, f.evidence, head, now).ready, false);
 });
+for (const name of required.filter(name => name.startsWith("E2E "))) {
+  test(`missing ${name} prevents merge`, () => {
+    const {snapshot, evidence} = fixture();
+    snapshot.checks = snapshot.checks.filter(check => check.name !== name);
+    assert.equal(evaluate(snapshot, evidence, head, now).ready, false);
+  });
+}
 test("documented conditional skips are allowed", () => {
   const {snapshot, evidence} = fixture();
   snapshot.checks.push({name: "dependabot-auto-merge", status: "completed", conclusion: "skipped"});

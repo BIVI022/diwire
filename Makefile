@@ -1,4 +1,4 @@
-.PHONY: format lint test test-e2e-fastapi test-e2e-aiohttp test-e2e-litestar test-e2e-flask test-e2e-celery test-e2e-typer docs examples-readme benchmark benchmark-artifact-dir benchmark-diwire benchmark-comparison benchmark-json benchmark-report benchmark-report-all benchmark-json-resolve benchmark-report-resolve
+.PHONY: format lint test test-all-pythons test-e2e-fastapi test-e2e-aiohttp test-e2e-litestar test-e2e-flask test-e2e-celery test-e2e-typer docs examples-readme benchmark benchmark-artifact-dir benchmark-diwire benchmark-comparison benchmark-json benchmark-report benchmark-report-all benchmark-json-resolve benchmark-report-resolve
 
 format:
 	uv run ruff format .
@@ -10,7 +10,7 @@ lint:
 	uv run mypy .
 
 test:
-	uv run pytest tests/ --benchmark-skip --cov=src/diwire --cov-report=term-missing
+	uv run --group docs pytest tests/ --benchmark-disable --cov=src/diwire --cov-report=term-missing
 
 test-e2e-fastapi:
 	@set +e; \
@@ -31,6 +31,8 @@ test-e2e-litestar:
 	docker compose -f tests/e2e/litestar/docker-compose.yml up --build --abort-on-container-exit --exit-code-from tests; \
 	exit_code=$$?; \
 	docker compose -f tests/e2e/litestar/docker-compose.yml down --volumes --remove-orphans; \
+	exit $$exit_code
+
 test-e2e-flask:
 	@set +e; \
 	docker compose -f tests/e2e/flask/docker-compose.yml up --build --abort-on-container-exit --exit-code-from tests; \
@@ -53,9 +55,12 @@ test-e2e-celery:
 	exit $$exit_code
 
 test-all-pythons:
-	uv run --python 3.10 pytest tests/ --benchmark-skip --cov=src/diwire --cov-report=term-missing
-	uv run --python 3.14 pytest tests/ --benchmark-skip --cov=src/diwire --cov-report=term-missing
-	uv run --python 3.14t pytest tests/ --benchmark-skip --cov=src/diwire --cov-report=term-missing
+	@set -e; \
+	for version in 3.10 3.11 3.12 3.13 3.13t 3.14 3.14t 3.15 3.15t; do \
+		UV_PROJECT_ENVIRONMENT=".cache/venvs/python-$$version" \
+		uv run --locked --python "$$version" --group docs \
+			pytest tests/ --benchmark-disable --cov=src/diwire --cov-report=term-missing; \
+	done
 
 docs:
 	rm -rf docs/_build

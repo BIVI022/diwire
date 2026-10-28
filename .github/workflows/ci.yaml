@@ -14,6 +14,8 @@ jobs:
   ci:
     name: Lint & Tests (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
+    env:
+      UV_PYTHON: ${{ matrix.python-version }}
     strategy:
       fail-fast: false
       matrix:
@@ -27,50 +29,14 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v6
         with:
+          version: "0.13.6"
           enable-cache: true
 
       - name: Set up Python ${{ matrix.python-version }}
         run: uv python install ${{ matrix.python-version }}
 
       - name: Install dependencies
-        if: matrix.python-version != '3.15t'
-        run: uv sync --group dev --group docs
-
-      - name: Install dependencies without mypy on Python 3.15t
-        if: matrix.python-version == '3.15t'
-        run: |
-          # mypy 2.1.0 depends on ast-serialize 0.3.0, whose built wheel is
-          # rejected by uv for free-threaded Python 3.15. Keep the 3.15t
-          # runtime test coverage, but skip installing the incompatible type
-          # checker stack until upstream publishes compatible wheels.
-          uv sync --group dev --group docs \
-            --no-install-package mypy \
-            --no-install-package ast-serialize
-          echo "UV_NO_SYNC=1" >> "$GITHUB_ENV"
-
-      - name: Remove Python 3.15-incompatible sphinxcontrib-jsmath namespace hook
-        if: matrix.python-version == '3.15' || matrix.python-version == '3.15t'
-        run: |
-          uv run python - <<'PY'
-          from importlib.metadata import PackageNotFoundError, distribution
-          from pathlib import Path
-
-          # sphinxcontrib-jsmath 1.0.1 ships an old setuptools namespace .pth hook.
-          # On Python 3.15, that hook raises a startup KeyError before every subprocess.
-          # Remove only the broken hook; the real sphinxcontrib.jsmath package stays installed.
-          target = "sphinxcontrib_jsmath-1.0.1-py3.7-nspkg.pth"
-
-          try:
-              dist = distribution("sphinxcontrib-jsmath")
-          except PackageNotFoundError:
-              raise SystemExit(0)
-
-          for file in dist.files or ():
-              if file.name == target:
-                  path = Path(dist.locate_file(file))
-                  path.unlink(missing_ok=True)
-                  print(f"Removed {path}")
-          PY
+        run: uv sync --locked --group dev --group docs
 
       - name: Check formatting
         run: uv run ruff format --check .
@@ -83,25 +49,10 @@ jobs:
         run: node --test .bb/tests/*.test.mjs
 
       - name: Type check with mypy
-        if: matrix.python-version != '3.15t'
         run: uv run mypy .
 
       - name: Run tests with coverage
-        if: matrix.python-version != '3.15' && matrix.python-version != '3.15t'
-        run: uv run pytest tests/ --benchmark-skip --cov=src/diwire --cov-report=xml --cov-report=term-missing
-
-      - name: Run tests (no coverage on Python 3.15)
-        if: matrix.python-version == '3.15'
-        run: uv run pytest tests/ --benchmark-skip
-
-      - name: Run tests (no coverage on Python 3.15t)
-        if: matrix.python-version == '3.15t'
-        run: |
-          # mypy is intentionally not installed on 3.15t above, so skip only
-          # the mypy-plugin tests that import mypy directly.
-          uv run pytest tests/ --benchmark-skip \
-            --ignore=tests/unit/internal/test_integrations_mypy_plugin.py \
-            --ignore=tests/unit/internal/test_integrations_mypy_plugin_internal.py
+        run: uv run pytest tests/ --benchmark-disable --cov=src/diwire --cov-report=xml --cov-report=term-missing
 
       - name: Upload coverage to Codecov
         if: matrix.python-version == '3.14'
@@ -111,69 +62,51 @@ jobs:
           fail_ci_if_error: false
           token: ${{ secrets.CODECOV_TOKEN }}
 
-  e2e-fastapi-compose:
-    name: E2E FastAPI (Docker Compose, Python 3.14)
+  e2e-compose:
+    name: E2E ${{ matrix.framework.name }} (Docker Compose, Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: [ "3.14", "3.15", "3.15t" ]
+        framework:
+          - { name: FastAPI, directory: fastapi }
+          - { name: aiohttp, directory: aiohttp }
+          - { name: Celery, directory: celery }
+          - { name: Litestar, directory: litestar }
+          - { name: Flask, directory: flask }
+          - { name: Typer, directory: typer }
+    env:
+      E2E_PYTHON_VERSION: ${{ matrix.python-version }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
-      - name: Run FastAPI e2e tests via Docker Compose
-        run: docker compose -f tests/e2e/fastapi/docker-compose.yml up --build --abort-on-container-exit --exit-code-from tests
+      - name: Run ${{ matrix.framework.name }} e2e tests via Docker Compose
+        run: docker compose -f tests/e2e/${{ matrix.framework.directory }}/docker-compose.yml up --build --abort-on-container-exit --exit-code-from tests
 
       - name: Print Docker Compose logs
         if: always()
-        run: docker compose -f tests/e2e/fastapi/docker-compose.yml logs --no-color
+        run: docker compose -f tests/e2e/${{ matrix.framework.directory }}/docker-compose.yml logs --no-color
 
       - name: Tear down Docker Compose services
         if: always()
-        run: docker compose -f tests/e2e/fastapi/docker-compose.yml down --volumes --remove-orphans
-
-  e2e-aiohttp-compose:
-    name: E2E aiohttp (Docker Compose, Python 3.14)
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v5
-        with:
-          fetch-depth: 0
-
-      - name: Run aiohttp e2e tests via Docker Compose
-        run: docker compose -f tests/e2e/aiohttp/docker-compose.yml up --build --abort-on-container-exit --exit-code-from tests
-
-      - name: Print Docker Compose logs
-        if: always()
-        run: docker compose -f tests/e2e/aiohttp/docker-compose.yml logs --no-color
-
-      - name: Tear down Docker Compose services
-        if: always()
-        run: docker compose -f tests/e2e/aiohttp/docker-compose.yml down --volumes --remove-orphans
-
-  e2e-celery-compose:
-    name: E2E Celery (Docker Compose, Python 3.14)
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v5
-        with:
-          fetch-depth: 0
-
-      - name: Run Celery e2e tests via Docker Compose
-        run: docker compose -f tests/e2e/celery/docker-compose.yml up --build --abort-on-container-exit --exit-code-from tests
-
-      - name: Print Docker Compose logs
-        if: always()
-        run: docker compose -f tests/e2e/celery/docker-compose.yml logs --no-color
-
-      - name: Tear down Docker Compose services
-        if: always()
-        run: docker compose -f tests/e2e/celery/docker-compose.yml down --volumes --remove-orphans
+        run: docker compose -f tests/e2e/${{ matrix.framework.directory }}/docker-compose.yml down --volumes --remove-orphans
 
   docs:
-    name: Docs Build
+    name: ${{ matrix.name }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: Docs Build, python-version: "3.13" }
+          - { name: "Docs Build (Python 3.15)", python-version: "3.15" }
+          - { name: "Docs Build (Python 3.15t)", python-version: "3.15t" }
+    env:
+      UV_PYTHON: ${{ matrix.python-version }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
@@ -183,13 +116,14 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v6
         with:
+          version: "0.13.6"
           enable-cache: true
 
       - name: Set up Python
-        run: uv python install 3.13
+        run: uv python install ${{ matrix.python-version }}
 
       - name: Install dependencies
-        run: uv sync --group docs
+        run: uv sync --locked --group docs
 
       - name: Build docs
         run: uv run sphinx-build -W -b html docs docs/_build/html
