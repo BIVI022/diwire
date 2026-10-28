@@ -61,8 +61,6 @@ dev = [
     "pytest-benchmark[histogram]>=5.2.3",
     "pytest-asyncio>=1.3.0",
     "uvicorn[standard]>=0.46.0",
-    # PyO3 0.29 in watchfiles 1.3 drops free-threaded Python 3.13.
-    "watchfiles>=1.2.0,<1.3.0 ; python_version < '3.14'",
     # Testing
     "httpx>=0.28.1",
     "pydantic>=2.14.0",

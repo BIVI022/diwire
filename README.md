@@ -14,6 +14,7 @@ resolvers, and free-threaded Python (no-GIL) — all with zero runtime dependenc
 
 Python 3.15 and its free-threaded build have first-party support. CI runs the full test suite
 with 100% coverage, type checks, benchmark smoke tests, and all six Docker E2E suites.
+The supported free-threaded versions are Python 3.14 and 3.15.
 
 ## Frameworks & integrations
 
