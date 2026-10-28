@@ -12,6 +12,7 @@ from tests.e2e.aiohttp.setup.services import (
     WebSocketBasedService,
     latest_cleanup_path,
 )
+from tests.e2e.runtime import assert_free_threaded_runtime
 
 app = web.Application(middlewares=[request_context_middleware])
 
@@ -86,6 +87,7 @@ app.add_routes(
 
 
 def main() -> None:
+    assert_free_threaded_runtime()
     container = Container()
     add_request_context(container)
     container.add_context_manager(CMService, scope=Scope.REQUEST)

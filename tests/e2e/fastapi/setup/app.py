@@ -18,6 +18,7 @@ from tests.e2e.fastapi.setup.services import (
     provide_cached_async_resource,
     provide_cached_async_service,
 )
+from tests.e2e.runtime import assert_free_threaded_runtime
 
 app = FastAPI()
 app.add_middleware(RequestContextMiddleware)
@@ -85,6 +86,7 @@ async def cached_async_state() -> dict[str, int]:
 
 
 def main() -> None:
+    assert_free_threaded_runtime()
     container = Container()
     add_request_context(container)
     container.add_factory(

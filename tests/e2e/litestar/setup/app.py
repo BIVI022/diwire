@@ -15,6 +15,7 @@ from tests.e2e.litestar.setup.services import (
     WebSocketBasedService,
     latest_cleanup_path,
 )
+from tests.e2e.runtime import assert_free_threaded_runtime
 
 # diwire resolves dependencies via runtime type hints; populate module globals so
 # forward references like `Request[object, object, State]` can be evaluated.
@@ -74,6 +75,7 @@ app = Litestar(
 
 
 def main() -> None:
+    assert_free_threaded_runtime()
     container = Container()
     add_request_context(container)
     container.add_context_manager(CMService, scope=Scope.REQUEST)

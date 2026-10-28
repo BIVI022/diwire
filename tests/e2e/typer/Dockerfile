@@ -38,4 +38,4 @@ RUN groupadd --system appuser \
 
 USER appuser
 
-ENTRYPOINT []
+ENTRYPOINT ["/bin/sh", "/workspace/tests/e2e/entrypoint.sh"]

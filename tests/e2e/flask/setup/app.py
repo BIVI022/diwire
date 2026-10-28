@@ -4,6 +4,7 @@ from diwire import Container, Injected, Scope, resolver_context
 from diwire.integrations.flask import add_request_context
 from tests.e2e.flask.setup.config import FlaskE2ESettings
 from tests.e2e.flask.setup.services import CMService, RequestBasedService, latest_cleanup_path
+from tests.e2e.runtime import assert_free_threaded_runtime
 
 app = Flask(__name__)
 
@@ -32,6 +33,7 @@ def cm_service_cleanup() -> str:
 
 
 def main() -> None:
+    assert_free_threaded_runtime()
     container = Container()
     add_request_context(container)
     container.add_context_manager(CMService, scope=Scope.REQUEST)
