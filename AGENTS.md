@@ -95,6 +95,15 @@ the current public API.
 - Public APIs should still include clear docstrings.
 - Example code in `docs/howto/examples/` can be lighter-weight and may include prints.
 
+## Public README
+
+- Write `README.md` for library users who need to choose, install, and use diwire.
+- Keep its introduction focused on the library's purpose and user benefits.
+- Put CI setup, dependency workarounds, coverage exclusions, test commands, and agent
+  workflow details in contributor documentation or PR notes, not in the public README.
+- Add compatibility limits only when they affect library users. Explain the user impact
+  in the relevant usage section and link to detailed documentation when needed.
+
 ## Testing guidelines
 
 - Aim for maximum coverage and edge cases for all new features.

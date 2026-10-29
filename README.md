@@ -12,18 +12,6 @@ diwire is a dependency injection container for Python 3.10+ that builds your obj
 scopes + deterministic cleanup, async resolution, open generics, fast steady-state resolution via compiled
 resolvers, and free-threaded Python (no-GIL) — all with zero runtime dependencies.
 
-Python 3.15 and its free-threaded build have first-party support. CI runs the full test suite
-with 100% coverage, type checks, benchmark smoke tests, and all six Docker E2E suites.
-CI also tests the experimental Python 3.13t build with a separate dependency group.
-Its msgspec and Litestar cases cannot run because those packages do not support this build.
-The 3.13t coverage report excludes only the two Litestar adapter files. Other CI jobs cover the whole library.
-
-To run the Python 3.13t checks:
-
-```bash
-UV_PYTHON=3.13t make DEV_GROUP=dev-python313t lint test
-```
-
 ## Frameworks & integrations
 
 - Web: [FastAPI](https://docs.diwire.dev/howto/web/fastapi.html), [Litestar](https://docs.diwire.dev/howto/web/litestar.html),
