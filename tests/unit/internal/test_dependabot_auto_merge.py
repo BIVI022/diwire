@@ -35,7 +35,7 @@ elif args[:2] != ["pr", "merge"]:
 """
 
 
-def _run_merge(tmp_path: Path, scenario: str) -> tuple[int, list[list[str]]]:
+def _run_merge(tmp_path: Path, scenario: str) -> tuple[int, list[list[str]], str]:
     gh = tmp_path / "gh"
     gh.write_text(_FAKE_GH)
     gh.chmod(0o700)
@@ -62,31 +62,44 @@ def _run_merge(tmp_path: Path, scenario: str) -> tuple[int, list[list[str]]]:
         timeout=10,
     )
     calls = [json.loads(line) for line in log.read_text().splitlines()]
-    return result.returncode, calls
+    return result.returncode, calls, result.stderr
 
 
 @pytest.mark.parametrize(
-    "scenario",
+    ("scenario", "last_call", "last_workflow", "message"),
     [
-        "failed",
-        "missing",
-        "benchmarks-failed",
-        "benchmarks-missing",
-        "head-changed",
-        "base-changed",
+        ("failed", ("run", "watch", "123"), None, None),
+        ("missing", ("run", "list"), "ci.yaml", "No ci.yaml run found"),
+        ("benchmarks-failed", ("run", "watch", "456"), None, None),
+        ("benchmarks-missing", ("run", "list"), "benchmarks.yaml", "No benchmarks.yaml run found"),
+        ("head-changed", ("api",), None, "The PR head or main changed"),
+        ("base-changed", ("api",), None, "The PR head or main changed"),
     ],
 )
 def test_dependabot_does_not_merge_without_successful_current_checks(
-    tmp_path: Path, scenario: str
+    tmp_path: Path,
+    scenario: str,
+    last_call: tuple[str, ...],
+    last_workflow: str | None,
+    message: str | None,
 ) -> None:
-    returncode, calls = _run_merge(tmp_path, scenario)
+    returncode, calls, stderr = _run_merge(tmp_path, scenario)
 
     assert returncode != 0
     assert all(call[:2] != ["pr", "merge"] for call in calls)
+    assert tuple(calls[-1][: len(last_call)]) == last_call
+    if last_workflow is not None:
+        assert calls[-1][calls[-1].index("--workflow") + 1] == last_workflow
+    if message is not None:
+        assert message in stderr
+    if scenario.startswith("benchmarks-"):
+        assert calls[0][calls[0].index("--workflow") + 1] == "ci.yaml"
+        assert calls[1][:3] == ["run", "watch", "123"]
+        assert calls[2][calls[2].index("--workflow") + 1] == "benchmarks.yaml"
 
 
 def test_dependabot_waits_for_ci_and_benchmarks_before_merging_exact_head(tmp_path: Path) -> None:
-    returncode, calls = _run_merge(tmp_path, "success")
+    returncode, calls, _ = _run_merge(tmp_path, "success")
 
     assert returncode == 0
     lists = [call for call in calls if call[:2] == ["run", "list"]]
@@ -101,7 +114,7 @@ def test_dependabot_waits_for_ci_and_benchmarks_before_merging_exact_head(tmp_pa
 
 
 def test_dependabot_waits_only_for_workflows_that_run_on_pull_requests(tmp_path: Path) -> None:
-    returncode, calls = _run_merge(tmp_path, "success")
+    returncode, calls, _ = _run_merge(tmp_path, "success")
 
     assert returncode == 0
     for call in calls:

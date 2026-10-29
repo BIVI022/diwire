@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import sys
+from types import SimpleNamespace
 
 import pytest
 
@@ -61,5 +62,21 @@ def test_get_typer_context_uses_click_for_older_typer(monkeypatch: pytest.Monkey
             resolved = module.get_typer_context()
 
         assert resolved.info_name == "legacy"
+
+    importlib.reload(typer_integration)
+
+
+def test_get_typer_context_uses_typer_context_storage(
+    monkeypatch: pytest.MonkeyPatch, context: typer.Context
+) -> None:
+    with monkeypatch.context() as patch:
+        patch.setitem(
+            sys.modules,
+            "typer._click",
+            SimpleNamespace(globals=SimpleNamespace(get_current_context=lambda: context)),
+        )
+        module = importlib.reload(typer_integration)
+
+        assert module.get_typer_context() is context
 
     importlib.reload(typer_integration)
