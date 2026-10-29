@@ -22,10 +22,10 @@ with Path(os.environ["GH_CALL_LOG"]).open("a") as stream:
 scenario = os.environ["GH_SCENARIO"]
 if args[:2] == ["run", "list"]:
     workflow = args[args.index("--workflow") + 1]
-    if scenario != "missing" and not (scenario == "docs-missing" and workflow == "docs.yaml"):
-        print("456" if workflow == "docs.yaml" else "123")
+    if scenario != "missing" and not (scenario == "benchmarks-missing" and workflow == "benchmarks.yaml"):
+        print("456" if workflow == "benchmarks.yaml" else "123")
 elif args[:2] == ["run", "watch"]:
-    sys.exit(1 if scenario == "failed" or (scenario == "docs-failed" and args[2] == "456") else 0)
+    sys.exit(1 if scenario == "failed" or (scenario == "benchmarks-failed" and args[2] == "456") else 0)
 elif args[:2] == ["pr", "view"]:
     print("c" * 40 if scenario == "head-changed" else os.environ["PR_HEAD_SHA"])
 elif args[0] == "api":
@@ -66,7 +66,15 @@ def _run_merge(tmp_path: Path, scenario: str) -> tuple[int, list[list[str]]]:
 
 
 @pytest.mark.parametrize(
-    "scenario", ["failed", "missing", "docs-failed", "docs-missing", "head-changed", "base-changed"]
+    "scenario",
+    [
+        "failed",
+        "missing",
+        "benchmarks-failed",
+        "benchmarks-missing",
+        "head-changed",
+        "base-changed",
+    ],
 )
 def test_dependabot_does_not_merge_without_successful_current_checks(
     tmp_path: Path, scenario: str
@@ -77,12 +85,12 @@ def test_dependabot_does_not_merge_without_successful_current_checks(
     assert all(call[:2] != ["pr", "merge"] for call in calls)
 
 
-def test_dependabot_waits_for_ci_and_docs_before_merging_exact_head(tmp_path: Path) -> None:
+def test_dependabot_waits_for_ci_and_benchmarks_before_merging_exact_head(tmp_path: Path) -> None:
     returncode, calls = _run_merge(tmp_path, "success")
 
     assert returncode == 0
     lists = [call for call in calls if call[:2] == ["run", "list"]]
-    assert [call[call.index("--workflow") + 1] for call in lists] == ["ci.yaml", "docs.yaml"]
+    assert [call[call.index("--workflow") + 1] for call in lists] == ["ci.yaml", "benchmarks.yaml"]
     assert all(call[call.index("--commit") + 1] == _HEAD_SHA for call in lists)
     watches = [call for call in calls if call[:2] == ["run", "watch"]]
     assert len(watches) == 2
@@ -90,3 +98,14 @@ def test_dependabot_waits_for_ci_and_docs_before_merging_exact_head(tmp_path: Pa
     assert calls[-1][:2] == ["pr", "merge"]
     assert "--auto" not in calls[-1]
     assert calls[-1][calls[-1].index("--match-head-commit") + 1] == _HEAD_SHA
+
+
+def test_dependabot_waits_only_for_workflows_that_run_on_pull_requests(tmp_path: Path) -> None:
+    returncode, calls = _run_merge(tmp_path, "success")
+
+    assert returncode == 0
+    for call in calls:
+        if call[:2] == ["run", "list"]:
+            workflow = call[call.index("--workflow") + 1]
+            path = _SCRIPT.parents[1] / "workflows" / workflow
+            assert "\n  pull_request:" in path.read_text()

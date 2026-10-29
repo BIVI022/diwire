@@ -9,7 +9,7 @@ set -euo pipefail
 wait_attempts="${MERGE_WAIT_ATTEMPTS:-60}"
 wait_seconds="${MERGE_WAIT_SECONDS:-5}"
 
-for workflow in ci.yaml docs.yaml; do
+for workflow in ci.yaml benchmarks.yaml; do
     run_id=""
     for ((attempt = 0; attempt < wait_attempts; attempt++)); do
         run_id="$(gh run list --repo "$GH_REPO" --workflow "$workflow" \
