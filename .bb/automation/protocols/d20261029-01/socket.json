@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "allowed_regression": 0.02,
+  "baseline_spread_ceiling": 0.03,
+  "pair_count": 5,
+  "calibration_count": 3,
+  "process_timeout_seconds": 600,
+  "maximum_seconds": 4200,
+  "plan_path": ".bb/automation/protocols/d20261029-01/plan.md",
+  "gain_rationale": "A five percent gain for public All4 and All16 synchronous collections is needed to justify a new branch on each member. A two percent socket throughput gain is needed because HTTP, scope cleanup and response work dilute this cost.",
+  "practical_gain_floor": 0.02,
+  "targets": [
+    "tests/performance/test_collection_socket_workloads.py::test_benchmark_diwire_collection_socket[sync]"
+  ],
+  "protected": [
+    "tests/performance/test_collection_socket_workloads.py::test_benchmark_diwire_collection_socket[async]",
+    "tests/performance/test_collection_socket_workloads.py::test_benchmark_diwire_collection_socket[mixed]"
+  ]
+}

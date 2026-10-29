@@ -25,15 +25,20 @@ async def provide_service() -> Service:
     return Service()
 
 
+async def provide_suspending_service() -> Service:
+    await asyncio.sleep(0)
+    return Service()
+
+
 async def provide_consumer(services: All[Service]) -> Consumer:
     return Consumer(services)
 
 
-@pytest.mark.parametrize("provider_kind", ["sync", "async"])
+@pytest.mark.parametrize("provider_kind", ["sync", "async", "mixed", "suspending"])
 @pytest.mark.parametrize("dependency_count", [4, 16])
 def test_benchmark_diwire_async_collection(
     benchmark: Any,
-    provider_kind: Literal["sync", "async"],
+    provider_kind: Literal["sync", "async", "mixed", "suspending"],
     dependency_count: int,
 ) -> None:
     """Measure async resolution of a consumer and its transient components.
@@ -46,11 +51,11 @@ def test_benchmark_diwire_async_collection(
     """
     container = make_diwire_benchmark_container()
     for index in range(dependency_count):
-        if provider_kind == "sync":
+        if provider_kind == "sync" or (provider_kind == "mixed" and index % 2 == 0):
             container.add(Service, component=index, lifetime=Lifetime.TRANSIENT, scope=Scope.APP)
         else:
             container.add_factory(
-                provide_service,
+                provide_suspending_service if provider_kind == "suspending" else provide_service,
                 component=index,
                 lifetime=Lifetime.TRANSIENT,
                 scope=Scope.APP,
