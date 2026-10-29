@@ -3697,11 +3697,14 @@ def _resolve_dependency_value_async(
             values: list[Any] = []
             for slot in dependency_plan.all_slots:
                 dependency_workflow = runtime.workflows_by_slot[slot]
-                value = await _dependency_value_for_slot_async(
-                    resolver=resolver,
-                    dependency_workflow=dependency_workflow,
-                    dependency_requires_async=dependency_workflow.requires_async,
-                )
+                if dependency_workflow.requires_async:
+                    value = await _dependency_value_for_slot_async(
+                        resolver=resolver,
+                        dependency_workflow=dependency_workflow,
+                        dependency_requires_async=dependency_workflow.requires_async,
+                    )
+                else:
+                    value = getattr(resolver, f"resolve_{dependency_workflow.slot}")()
                 values.append(value)
             return tuple(values)
 

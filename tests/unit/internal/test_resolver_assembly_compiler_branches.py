@@ -4887,3 +4887,44 @@ async def test_generator_cleanup_enabled_branches_raise_when_generator_does_not_
             provider_scope_resolver=scope_resolver,
             provider=_empty_generator,
         )
+
+
+async def test_async_all_dependency_keeps_workflow_slot_and_deferred_method_lookup() -> None:
+    # The lookup key and stored workflow slot can differ. Preserve the helper's
+    # use of workflow.slot, including method replacement before awaiting.
+    runtime = _runtime(scopes=(_scope_plan(level=1, name="app"),), workflows=())
+    runtime.workflows_by_slot = {1: _workflow_plan(slot=7, is_cached=False)}
+    value = object()
+    resolver = SimpleNamespace(resolve_1=lambda: pytest.fail("used lookup key as slot"))
+    plan = ProviderDependencyPlan(
+        kind="all",
+        dependency=_dependency(),
+        dependency_index=0,
+        all_slots=(1,),
+    )
+    pending = compiler_module._resolve_dependency_value_async(
+        runtime=runtime,
+        resolver=resolver,
+        dependency_plan=plan,
+    )
+    resolver.resolve_7 = lambda: value
+    result = await pending
+    assert isinstance(result, tuple)
+    assert result[0] is value
+
+
+async def test_async_all_dependency_defers_missing_slot_error_until_await() -> None:
+    runtime = _runtime(scopes=(_scope_plan(level=1, name="app"),), workflows=())
+    runtime.workflows_by_slot = {1: _workflow_plan(slot=7, is_cached=False)}
+    pending = compiler_module._resolve_dependency_value_async(
+        runtime=runtime,
+        resolver=SimpleNamespace(),
+        dependency_plan=ProviderDependencyPlan(
+            kind="all",
+            dependency=_dependency(),
+            dependency_index=0,
+            all_slots=(1,),
+        ),
+    )
+    with pytest.raises(AttributeError, match="resolve_7"):
+        await pending
